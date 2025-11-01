@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.example.fcitx5.voiceinput" path="/org/example/fcitx5/voiceinput/">
+    <key name="hotkey" type="s">
+      <default>'F12'</default>
+      <summary>Hotkey to trigger voice input</summary>
+    </key>
+  </schema>
+</schemalist>

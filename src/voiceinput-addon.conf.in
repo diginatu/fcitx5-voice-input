@@ -1,0 +1,12 @@
+[Addon]
+Name=Voice Input
+Category=Module
+Version= @PROJECT_VERSION@
+Library=voiceinput
+Type=SharedLibrary
+OnDemand=False
+Configurable=True
+
+[Addon/Dependencies]
+0=dbus
+1=notifications

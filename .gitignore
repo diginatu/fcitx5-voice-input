@@ -1,0 +1,13 @@
+# Build artifacts
+/build/
+*.so
+*.o
+
+# Cache files
+.cache/
+
+# IDE/build tool files
+compile_commands.json
+
+# Temporary reference files
+quickphrase/
