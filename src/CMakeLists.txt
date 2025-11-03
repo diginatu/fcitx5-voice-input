@@ -1,4 +1,4 @@
-add_library(voiceinput SHARED
+add_fcitx5_addon(voiceinput
   voiceinput-module.cpp
   speech_recognizer.cpp
   audio_capture.cpp
@@ -12,13 +12,11 @@ target_link_libraries(voiceinput PRIVATE
 
 target_include_directories(voiceinput PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
 
-set_target_properties(voiceinput PROPERTIES PREFIX "")
-
 install(TARGETS voiceinput
-  LIBRARY DESTINATION ${FCITX_INSTALL_LIBDIR}/fcitx5)
+  LIBRARY DESTINATION ${FCITX_INSTALL_ADDONDIR})
 
-configure_file(voiceinput-addon.conf.in voiceinput-addon.conf @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/voiceinput-addon.conf
+configure_file(voiceinput.conf.in voiceinput.conf @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/voiceinput.conf
   DESTINATION ${FCITX_INSTALL_PKGDATADIR}/addon)
 
 install(FILES voiceinput.conf

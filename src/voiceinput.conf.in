@@ -2,7 +2,7 @@
 Name=Voice Input
 Category=Module
 Version= @PROJECT_VERSION@
-Library=voiceinput
+Library=libvoiceinput
 Type=SharedLibrary
 OnDemand=False
 Configurable=True
