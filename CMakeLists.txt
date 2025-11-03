@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(fcitx5-voiceinput VERSION 0.1.0 LANGUAGES CXX)
+project(fcitx5-voice-input VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +12,3 @@ pkg_check_modules(PULSEAUDIO libpulse-simple)
 find_package(CURL)
 
 add_subdirectory(src)
-
-# Optional: install schemas and icons
-install(FILES data/org.example.fcitx5.voiceinput.gschema.xml
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)
