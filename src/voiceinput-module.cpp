@@ -4,7 +4,10 @@
 #include <fcitx/addonmanager.h> // For AddonManager
 #include <fcitx/event.h>       // For fcitx::Event
 #include <fcitx/inputcontextmanager.h>
+#include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
+#include <fcitx/text.h>
+#include <fcitx/userinterface.h>
 #include <fcitx-utils/keysym.h>
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
@@ -60,6 +63,26 @@ void VoiceInputModule::cancel() {
   // recognizer_->stop();
   hideIndicator();
   active_ = false;
+}
+
+void VoiceInputModule::showIndicator(const std::string &text) {
+  auto *ic = instance_->inputContextManager().mostRecentInputContext();
+  if (!ic) {
+    return;
+  }
+  auto &panel = ic->inputPanel();
+  panel.reset();
+  panel.setAuxUp(fcitx::Text(text));
+  ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+}
+
+void VoiceInputModule::hideIndicator() {
+  auto *ic = instance_->inputContextManager().mostRecentInputContext();
+  if (!ic) {
+    return;
+  }
+  ic->inputPanel().reset();
+  ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
 namespace fcitx {
