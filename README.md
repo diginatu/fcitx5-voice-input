@@ -11,6 +11,45 @@ Press a hotkey, speak, and the recognized text will be committed to your current
 - The finalized WAV buffer is POSTed as `multipart/form-data` (field name `audio_file`) to a Whisper-compatible HTTP endpoint via libcurl, on a detached worker thread. The endpoint is currently hardcoded to `http://localhost:9000/asr?output=txt&encode=false`.
 - Once the request returns, the transcribed text is dispatched back to the Fcitx event loop and committed to the active input context. Errors are logged via `FCITX_WARN`. The user cannot cancel an in-flight STT request.
 
+## Prerequisites
+
+### Runtime
+
+- Linux with Fcitx5 installed and running.
+- A PulseAudio-compatible sound server with a default record source (PipeWire's `pipewire-pulse` works too) — this is what `pa_simple_new` connects to for capture.
+- A Whisper-compatible HTTP server reachable at the configured endpoint (see **Speech Recognition Server** below).
+
+### Build
+
+In addition to the runtime requirements:
+
+- C++20 compiler, CMake ≥ 3.21, Ninja, pkg-config, gettext.
+- Development headers for Fcitx5 (core/utils/config), PulseAudio, and libcurl.
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt install build-essential cmake ninja-build gettext pkg-config \
+  libfcitx5core-dev libfcitx5utils-dev libfcitx5config-dev \
+  libpulse-dev libcurl4-openssl-dev
+```
+
+### Speech Recognition Server
+
+This module expects a [whisper-asr-webservice](https://github.com/ahmetoner/whisper-asr-webservice)-compatible HTTP server. By default it targets `http://localhost:9000/asr?output=txt&encode=false`:
+
+- `output=txt` makes the server return the transcript as a plain text body (no JSON parsing required).
+- `encode=false` skips the server-side ffmpeg re-encode step, because the addon already sends a 16 kHz mono S16LE WAV that Whisper accepts natively.
+
+A quick way to bring one up locally is the upstream Docker image:
+
+```bash
+docker run -d -p 9000:9000 --name whisper \
+  onerahmet/openai-whisper-asr-webservice:latest
+```
+
+The endpoint URL is currently hardcoded in `VoiceInputModule`'s constructor (`src/voiceinput-module.cpp`); making it user-configurable is tracked together with the hardcoded F12 hotkey.
+
 ## Directory Structure
 
 ```
@@ -33,18 +72,18 @@ fcitx5-voiceinput/
 
 ## Build and Install
 
-**1. Dependencies**
+See **Prerequisites** above for the packages you need to install first.
 
-You'll need a C++ compiler, CMake, Ninja, and the development libraries for Fcitx5. For audio capture and speech recognition, you'll also need libraries like PulseAudio and a networking library like cURL.
+**1. Build**
 
-Example on Debian/Ubuntu:
+The repo ships a `Makefile` wrapper that configures a fresh Debug build with Ninja and `CMAKE_INSTALL_PREFIX=/usr`. From the repo root:
+
 ```bash
-sudo apt install build-essential cmake ninja-build gettext pkg-config \
-  libfcitx5core-dev libfcitx5utils-dev libfcitx5config-dev \
-  libpulse-dev libcurl4-openssl-dev
+make           # fresh debug build into ./build via cmake + ninja
+make clean     # remove ./build
 ```
 
-**2. Build**
+Or invoke CMake by hand if you want to control the build directory or flags:
 
 ```bash
 mkdir build && cd build
@@ -52,14 +91,14 @@ cmake ..
 make
 ```
 
-**3. Install and Run**
+**2. Install and Run**
 
 ```bash
 sudo make install
 fcitx5 -r # Restart fcitx5 to load the new addon
 ```
 
-**4. Environment Setup**
+**3. Environment Setup**
 
 For applications to see Fcitx5, you may need to set these environment variables:
 ```bash
@@ -67,6 +106,39 @@ export XMODIFIERS=@im=fcitx
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 ```
+
+## Usage
+
+After installing the addon, restarting Fcitx5, and starting a Whisper-compatible server at the configured endpoint (see **Prerequisites → Speech Recognition Server** above):
+
+1. Focus any text field.
+2. Press **F12** — a "Listening…" indicator appears in the input panel.
+3. Speak your phrase.
+4. Press **F12** again — the indicator hides immediately and the recorded WAV is uploaded in the background. Within ~1–3 s (depending on the server and model size) the transcript is committed into the focused field.
+5. To cancel while recording, press **Esc** — the buffer is discarded and nothing is uploaded. Once the request is in flight, it cannot be cancelled.
+
+The addon logs to wherever your Fcitx5 instance logs (e.g. `journalctl --user -u fcitx5` on systemd setups, or its stderr if you started it manually). Useful lines:
+
+- `voiceinput: captured N bytes` — capture finished, request fired. `N` should be roughly `44 + 32000 * seconds_spoken`.
+- `voiceinput: STT error: …` — the server returned non-2xx or libcurl reported a transport error (e.g. connection refused if the Whisper server isn't running).
+
+## Testing
+
+Unit tests are built alongside the addon and registered with CTest:
+
+```bash
+cd build
+ctest --output-on-failure          # run all tests
+ctest -R wav_header_test           # run a single test by name
+ctest -R speech_recognizer_test
+```
+
+Current coverage:
+
+- `wav_header_test` — verifies the 44-byte RIFF/PCM header builder (`src/wav_header.h`).
+- `speech_recognizer_test` — verifies the inline `trimTranscript()` helper that strips trailing whitespace from a Whisper text response (`src/speech_recognizer.h`).
+
+The libcurl HTTP path and the Fcitx5 addon integration are not unit-tested; verify them manually using the steps under **Usage**. When adding new pure-function tests, follow the same mutation-check discipline used elsewhere in the project: briefly break the implementation, confirm the new test fails, then revert.
 
 ## Configuration
 
@@ -100,14 +172,7 @@ public:
 };
 ```
 
-### Speech Recognition Server
-
-This module expects a [whisper-asr-webservice](https://github.com/ahmetoner/whisper-asr-webservice)-compatible HTTP server. By default it targets `http://localhost:9000/asr?output=txt&encode=false`:
-
-- `output=txt` makes the server return the transcript as a plain text body (no JSON parsing required).
-- `encode=false` skips the server-side ffmpeg re-encode step, because the addon already sends a 16 kHz mono S16LE WAV that Whisper accepts natively.
-
-The endpoint URL is currently hardcoded in `VoiceInputModule`'s constructor (`src/voiceinput-module.cpp`); making it user-configurable is tracked together with the hardcoded F12 hotkey.
+The server-side requirements and the default endpoint URL live under **Prerequisites → Speech Recognition Server**.
 
 ## Appendix: Useful Links
 
