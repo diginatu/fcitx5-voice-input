@@ -38,17 +38,30 @@ void AudioCapture::captureLoop() {
     spec.rate = kSampleRate;
     spec.channels = static_cast<uint8_t>(kChannels);
 
+    constexpr size_t kChunkSamples = 1600; // ~100 ms at 16 kHz
+    constexpr uint32_t kChunkBytes =
+        static_cast<uint32_t>(kChunkSamples * sizeof(int16_t));
+
+    // Ask the server for fragments matching our read size so stop() can
+    // interrupt within one chunk. Without this, the default fragsize can be
+    // hundreds of ms or more.
+    pa_buffer_attr attr{};
+    attr.maxlength = static_cast<uint32_t>(-1);
+    attr.tlength = static_cast<uint32_t>(-1);
+    attr.prebuf = static_cast<uint32_t>(-1);
+    attr.minreq = static_cast<uint32_t>(-1);
+    attr.fragsize = kChunkBytes;
+
     int err = 0;
     pa_simple *stream = pa_simple_new(nullptr, "fcitx5-voice-input",
                                       PA_STREAM_RECORD, nullptr, "Voice Input",
-                                      &spec, nullptr, nullptr, &err);
+                                      &spec, nullptr, &attr, &err);
     if (!stream) {
         FCITX_WARN() << "voiceinput: pa_simple_new failed: " << pa_strerror(err);
         running_.store(false);
         return;
     }
 
-    constexpr size_t kChunkSamples = 320; // ~20 ms at 16 kHz
     std::array<int16_t, kChunkSamples> chunk{};
 
     while (running_.load()) {
