@@ -4,11 +4,13 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/instance.h>
 #include <fcitx-utils/handlertable.h>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 class SpeechRecognizer;
+class AudioCapture;
 
 class VoiceInputModule final : public fcitx::AddonInstance {
 public:
@@ -24,6 +26,7 @@ private:
   void showIndicator(const std::string &text);
   void hideIndicator();
   void startListening();
+  void finishRecording();
   void cancel();
 
   fcitx::Instance *instance_;
@@ -32,4 +35,6 @@ private:
 
   bool active_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
+  std::unique_ptr<AudioCapture> audioCapture_;
+  std::vector<uint8_t> lastRecording_;
 };

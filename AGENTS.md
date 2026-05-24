@@ -9,8 +9,8 @@ Read this fully before making code or build changes.
 
 - C++20 project that implements a Fcitx5 addon for voice input.
 - Build system is CMake; `Makefile` wraps configuration and Ninja builds.
-- Main custom module lives in `src/` (`voiceinput-module.*`, `audio_capture.*`, `speech_recognizer.*`).
-- Intended runtime flow: a global hotkey (currently hardcoded to `F12`) starts listening, audio is captured via PulseAudio, speech is recognized via `SpeechRecognizer`, and the final text is committed to the active input context.
+- Main custom module lives in `src/` (`voiceinput-module.*`, `audio_capture.*`, `speech_recognizer.*`, `wav_header.h`).
+- Intended runtime flow: a global hotkey (currently hardcoded to `F12`) starts listening, audio is captured via PulseAudio into an in-memory WAV buffer (`lastRecording_`), the buffer is sent as `multipart/form-data` to a speech recognition endpoint (not yet implemented), and the final text is committed to the active input context.
 - Addon descriptor template: `src/voiceinput.conf.in` (configured via CMake to produce `voiceinput.conf` for `addon/`).
 - User-facing config description: `src/voiceinput.conf` (installed to `configdesc/`). NOTE: this file is currently a flat key=value stub, not a real Fcitx config descriptor — see Implementation Status.
 - `conf/default.yaml` exists but is not loaded by anything; treat it as a placeholder until a config loader is added or remove it.
@@ -86,50 +86,60 @@ Agents should not assume `fcitx5` is available on the host; mention this to the 
 
 ### 3. Current Implementation Status
 
-This project is in an early scaffolding state. The addon loads, registers the F12 hotkey, and toggles a status-area indicator, but the voice pipeline is not connected. Before designing changes, read the source — do not assume anything beyond the indicator works.
+The addon loads, registers the F12 hotkey, shows a status indicator, and now records audio in memory via PulseAudio. The downstream pieces (speech recognition, multipart upload) are still unimplemented. Before designing changes, read the source — do not assume anything beyond the documented state works.
+
+**Implemented:**
+
+- `src/audio_capture.{h,cpp}` — real PulseAudio capture using `pa_simple_*` on a worker thread. `start()` opens an `S16LE / 16 kHz / mono` record stream; `stop()` joins the worker and returns a WAV-wrapped `std::vector<uint8_t>` (RIFF header + PCM payload) ready for upload.
+- `src/wav_header.h` — pure `buildWavHeader(pcmByteCount, sampleRate, channels, bitsPerSample)` returning the 44-byte RIFF/fmt/data header. Unit-tested via `tests/wav_header_test.cpp`.
+- `src/voiceinput-module.{h,cpp}` — `audioCapture_` is constructed in the ctor. `startListening()` calls `audioCapture_->start()`. F12-while-active runs `finishRecording()`, which stores the WAV bytes in `lastRecording_` and logs the size via `FCITX_INFO`. ESC-while-active runs `cancel()`, which stops capture and discards the buffer.
+- Root `CMakeLists.txt` — `pkg_check_modules(PULSEAUDIO REQUIRED libpulse-simple)`, `enable_testing()`, `add_subdirectory(tests)`.
 
 **Stubs (returning immediately, no behavior):**
 
-- `src/audio_capture.cpp` — `AudioCapture::start()` / `stop()` are empty TODOs. PulseAudio (`libpulse-simple`) is linked but not used.
 - `src/speech_recognizer.cpp` — `SpeechRecognizer::start()` / `stop()` are empty TODOs. cURL is linked but not used. No backend (Vosk, Whisper, cloud STT) has been chosen.
 
 **Wiring gaps in `src/voiceinput-module.cpp`:**
 
 - `recognizer_` (`std::unique_ptr<SpeechRecognizer>`) is declared but never constructed.
-- The calls `recognizer_->start(...)` in `startListening()` and `recognizer_->stop()` in `cancel()` are commented out.
-- `AudioCapture` is not instantiated or referenced anywhere in the module.
+- `lastRecording_` is populated in `finishRecording()` but not yet sent anywhere — the multipart upload step is the next piece of work.
 - `onSpeechResult()` exists but has no caller — no callback is wired from the (non-existent) recognizer back into it.
 
 **Known correctness issues to fix when touching nearby code:**
 
-- The key-event handler's `else` branch calls `filterAndAccept()` on every non-F12 key while inactive, which would swallow normal typing. The eat-keys behavior should only apply while `active_` is true.
 - The hotkey is hardcoded to `FcitxKey_F12`. There is no `FCITX_CONFIGURATION` struct, no `getConfig()` / `setConfig()` override, so `voiceinput.conf`'s `Hotkey=` line is decorative. See `quickphrase/quickphrase.h`'s `QuickPhraseConfig` (`KeyListOption`) for the canonical pattern.
 - `_()` is used for translatable strings, but no i18n domain is registered (`registerDomain()`) and no gettext catalog or `fcitx5_install_translation` call exists.
-- `pkg_check_modules(PULSEAUDIO libpulse-simple)` in the root `CMakeLists.txt` is not `REQUIRED`, but `${PULSEAUDIO_LIBRARIES}` is linked unconditionally. Either mark it required or guard the link.
 - `src/voiceinput.conf` is installed into `configdesc/` (`src/CMakeLists.txt`) but it is not in the format Fcitx expects for a config descriptor; the descriptor should be generated from a `Configuration` struct.
 
-When implementing real behavior, prefer this order to minimize churn:
+When implementing the remaining behavior, prefer this order to minimize churn:
 
-1. PulseAudio capture in `AudioCapture` (worker thread, push PCM frames).
-2. Pick a recognizer backend, implement `SpeechRecognizer::start/stop`, deliver results via `ResultCB` on the Fcitx event loop (use `Instance::eventDispatcher()` to hop back from worker threads safely).
-3. Construct `recognizer_` in `VoiceInputModule`'s constructor and uncomment the `start`/`stop` calls.
-4. Fix the key-eating bug.
-5. Add `FCITX_CONFIGURATION` for the hotkey; replace the stub `voiceinput.conf` with a generated descriptor.
-6. Register an i18n domain (or drop `_()` until translations exist).
+1. HTTP `multipart/form-data` upload of `lastRecording_` to a chosen STT endpoint. Live in `SpeechRecognizer` (or a thin uploader it owns), use the already-linked cURL.
+2. Implement `SpeechRecognizer::start/stop`, deliver results via `ResultCB` on the Fcitx event loop (use `Instance::eventDispatcher()` to hop back from worker threads safely).
+3. Construct `recognizer_` in `VoiceInputModule`'s constructor and wire `finishRecording()` to pass `lastRecording_` to the recognizer, then commit the result via `onSpeechResult()`.
+4. Add `FCITX_CONFIGURATION` for the hotkey; replace the stub `voiceinput.conf` with a generated descriptor.
+5. Register an i18n domain (or drop `_()` until translations exist).
 
 ---
 
 ### 4. Tests, Linting, and Single-Test Runs
 
-- There is currently no automated unit-test or integration-test suite in this repository.
-- There is no configured static-analysis or lint target (no `.clang-format`, no CTest, no dedicated lint target in `CMakeLists.txt`).
-- The main validation path today is manual functional testing inside a running Fcitx5 session:
+- CTest is enabled at the root `CMakeLists.txt`. Test sources live under `tests/`.
+- Current coverage: `tests/wav_header_test.cpp` exercises `src/wav_header.h` (magic bytes, sample rate, channels, bit depth, byte rate, block align, RIFF/data sizes). Pure-function tests like this should also be mutation-checked (briefly break the implementation, confirm the test fails, revert) per the global TDD guideline.
+- PulseAudio capture and the Fcitx5 addon path are still verified manually inside a running Fcitx5 session:
   - Build and install the addon.
   - Restart Fcitx5 (`fcitx5 -r`).
-  - Focus a text field, press the hotkey (currently hardcoded to `F12` — see Implementation Status), and verify behavior.
-- Because no formal tests exist, there is no "run a single test" command at this time.
+  - Focus a text field, press the hotkey (currently hardcoded to `F12` — see Implementation Status), speak, press F12 again. Confirm the FCITX_INFO log shows a recorded byte count roughly equal to `44 + 32000 * seconds_spoken`. ESC during recording cancels and discards the buffer.
+- No `.clang-format` or static-analysis target is configured.
 
-When adding tests in the future (e.g., via CTest or a separate test runner), prefer naming that makes it easy to run a single test case (e.g., `ctest -R VoiceInput_*`).
+**Running tests**
+
+```bash
+cd build
+ctest --output-on-failure        # all tests
+ctest -R wav_header_test         # single test by name
+```
+
+When adding new tests, place them under `tests/`, register them in `tests/CMakeLists.txt`, and prefer naming that makes it easy to run a single test case (e.g., `ctest -R VoiceInput_*`).
 
 ---
 

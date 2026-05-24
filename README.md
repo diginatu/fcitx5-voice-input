@@ -6,9 +6,9 @@ Press a hotkey, speak, and the recognized text will be committed to your current
 
 ## High-level Architecture
 
-- The module loads with Fcitx5 and registers a global hotkey.
-- When the hotkey is pressed, it begins capturing audio and shows a "listening" indicator.
-- The audio is sent to a speech recognition component.
+- The module loads with Fcitx5 and registers a global hotkey (currently hardcoded to `F12`).
+- When the hotkey is pressed, the module starts capturing 16 kHz mono PCM audio via PulseAudio into an in-memory WAV buffer and shows a "Listening…" indicator. Press `F12` again to finalize the buffer, or `Esc` to cancel and discard.
+- The finalized WAV buffer is intended to be sent as `multipart/form-data` to a speech recognition endpoint (not yet implemented).
 - The final recognized text is committed to the active input context.
 
 ## Directory Structure
@@ -18,10 +18,14 @@ fcitx5-voiceinput/
 ├── CMakeLists.txt
 ├── src/
 │   ├── CMakeLists.txt
-│   ├── voiceinput-module.h
-│   ├── voiceinput-module.cpp
-│   ├── speech_recognizer.h
-│   └── ...
+│   ├── voiceinput-module.{h,cpp}
+│   ├── audio_capture.{h,cpp}      # PulseAudio capture into a WAV buffer
+│   ├── wav_header.h               # 44-byte RIFF/PCM header builder
+│   ├── speech_recognizer.{h,cpp}  # stub: STT backend not yet chosen
+│   └── voiceinput.conf{,.in}
+├── tests/
+│   ├── CMakeLists.txt
+│   └── wav_header_test.cpp        # CTest target: ctest -R wav_header_test
 ├── data/
 └── ...
 ```

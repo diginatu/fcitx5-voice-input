@@ -8,7 +8,10 @@ find_package(PkgConfig REQUIRED)
 find_package(Fcitx5Core REQUIRED)
 find_package(Fcitx5Utils REQUIRED)
 
-pkg_check_modules(PULSEAUDIO libpulse-simple)
+pkg_check_modules(PULSEAUDIO REQUIRED libpulse-simple)
 find_package(CURL)
 
+enable_testing()
+
 add_subdirectory(src)
+add_subdirectory(tests)

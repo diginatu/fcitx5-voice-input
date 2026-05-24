@@ -1,4 +1,5 @@
 #include "voiceinput-module.h"
+#include "audio_capture.h"
 #include "speech_recognizer.h"
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h> // For AddonManager
@@ -9,9 +10,10 @@
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
 #include <fcitx-utils/keysym.h>
+#include <fcitx-utils/log.h>
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
-    : instance_(instance) {
+    : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
   registerEventWatchers();
 }
 
@@ -28,9 +30,9 @@ void VoiceInputModule::registerEventWatchers() {
             ke.filterAndAccept();
             startListening();
           } else {
-            // if pressed again, cancel
+            // if pressed again, finalize the recording
             ke.filterAndAccept();
-            cancel();
+            finishRecording();
           }
         } else if (active_) {
           // Allow ESC to cancel while active
@@ -46,9 +48,21 @@ void VoiceInputModule::registerEventWatchers() {
 }
 
 void VoiceInputModule::startListening() {
+  if (!audioCapture_->start()) {
+    FCITX_WARN() << "voiceinput: failed to start audio capture";
+    showIndicator("Audio init failed");
+    return;
+  }
   active_ = true;
   showIndicator("Listening…");
-  // recognizer_->start(... callbacks ...)
+}
+
+void VoiceInputModule::finishRecording() {
+  lastRecording_ = audioCapture_->stop();
+  FCITX_INFO() << "voiceinput: captured " << lastRecording_.size() << " bytes";
+  // TODO: post lastRecording_ to STT endpoint as multipart/form-data
+  hideIndicator();
+  active_ = false;
 }
 
 void VoiceInputModule::onSpeechResult(const std::string &text) {
@@ -60,7 +74,8 @@ void VoiceInputModule::onSpeechResult(const std::string &text) {
 }
 
 void VoiceInputModule::cancel() {
-  // recognizer_->stop();
+  // Drop the buffer; user cancelled.
+  (void)audioCapture_->stop();
   hideIndicator();
   active_ = false;
 }
