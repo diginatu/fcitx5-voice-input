@@ -9,11 +9,17 @@
 #include <fcitx/instance.h>
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
+#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
 
+#include <utility>
+
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
-    : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
+    : instance_(instance),
+      recognizer_(std::make_unique<SpeechRecognizer>(
+          "http://localhost:9000/asr?output=txt&encode=false")),
+      audioCapture_(std::make_unique<AudioCapture>()) {
   registerEventWatchers();
 }
 
@@ -60,9 +66,24 @@ void VoiceInputModule::startListening() {
 void VoiceInputModule::finishRecording() {
   lastRecording_ = audioCapture_->stop();
   FCITX_INFO() << "voiceinput: captured " << lastRecording_.size() << " bytes";
-  // TODO: post lastRecording_ to STT endpoint as multipart/form-data
   hideIndicator();
   active_ = false;
+  if (lastRecording_.empty()) {
+    return;
+  }
+  auto wav = std::move(lastRecording_);
+  auto *dispatcher = &instance_->eventDispatcher();
+  recognizer_->transcribe(
+      std::move(wav),
+      [this, dispatcher](std::string text) {
+        dispatcher->schedule(
+            [this, text = std::move(text)]() { onSpeechResult(text); });
+      },
+      [dispatcher](std::string err) {
+        dispatcher->schedule([err = std::move(err)]() {
+          FCITX_WARN() << "voiceinput: STT error: " << err;
+        });
+      });
 }
 
 void VoiceInputModule::onSpeechResult(const std::string &text) {

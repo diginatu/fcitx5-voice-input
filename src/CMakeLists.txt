@@ -11,9 +11,7 @@ if(PULSEAUDIO_FOUND)
   target_include_directories(voiceinput PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
 endif()
 
-if(CURL_FOUND)
-  target_link_libraries(voiceinput PRIVATE CURL::libcurl)
-endif()
+target_link_libraries(voiceinput PRIVATE CURL::libcurl)
 
 install(TARGETS voiceinput
   LIBRARY DESTINATION ${FCITX_INSTALL_ADDONDIR})
