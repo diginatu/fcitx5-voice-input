@@ -10,10 +10,12 @@ Read this fully before making code or build changes.
 - C++20 project that implements a Fcitx5 addon for voice input.
 - Build system is CMake; `Makefile` wraps configuration and Ninja builds.
 - Main custom module lives in `src/` (`voiceinput-module.*`, `audio_capture.*`, `speech_recognizer.*`).
-- Core runtime flow: a global hotkey (defaults to `F12`) starts listening, audio is captured via PulseAudio, speech is recognized via `SpeechRecognizer`, and the final text is committed to the active input context.
-- Configuration is defined in `conf/default.yaml`, `src/voiceinput.conf`, and `src/voiceinput-addon.conf.in`.
-- The `quickphrase/` directory is vendored code from upstream Fcitx; keep style and behavior consistent and minimize invasive changes there.
-- Additional config and data live under `conf/`, `data/`, and `quickphrase/quickphrase.d/`.
+- Intended runtime flow: a global hotkey (currently hardcoded to `F12`) starts listening, audio is captured via PulseAudio, speech is recognized via `SpeechRecognizer`, and the final text is committed to the active input context.
+- Addon descriptor template: `src/voiceinput.conf.in` (configured via CMake to produce `voiceinput.conf` for `addon/`).
+- User-facing config description: `src/voiceinput.conf` (installed to `configdesc/`). NOTE: this file is currently a flat key=value stub, not a real Fcitx config descriptor — see Implementation Status.
+- `conf/default.yaml` exists but is not loaded by anything; treat it as a placeholder until a config loader is added or remove it.
+- The `quickphrase/` directory is vendored code from upstream Fcitx kept as a reference implementation. It is NOT wired into the root `CMakeLists.txt` and is not built — do not assume changes there have any effect on the produced addon.
+- Icon assets live under `data/icons/` (e.g. `microphone.svg`).
 
 Always skim `README.md` and this `AGENTS.md` file before larger edits.
 
@@ -82,21 +84,56 @@ Agents should not assume `fcitx5` is available on the host; mention this to the 
 
 ---
 
-### 3. Tests, Linting, and Single-Test Runs
+### 3. Current Implementation Status
+
+This project is in an early scaffolding state. The addon loads, registers the F12 hotkey, and toggles a status-area indicator, but the voice pipeline is not connected. Before designing changes, read the source — do not assume anything beyond the indicator works.
+
+**Stubs (returning immediately, no behavior):**
+
+- `src/audio_capture.cpp` — `AudioCapture::start()` / `stop()` are empty TODOs. PulseAudio (`libpulse-simple`) is linked but not used.
+- `src/speech_recognizer.cpp` — `SpeechRecognizer::start()` / `stop()` are empty TODOs. cURL is linked but not used. No backend (Vosk, Whisper, cloud STT) has been chosen.
+
+**Wiring gaps in `src/voiceinput-module.cpp`:**
+
+- `recognizer_` (`std::unique_ptr<SpeechRecognizer>`) is declared but never constructed.
+- The calls `recognizer_->start(...)` in `startListening()` and `recognizer_->stop()` in `cancel()` are commented out.
+- `AudioCapture` is not instantiated or referenced anywhere in the module.
+- `onSpeechResult()` exists but has no caller — no callback is wired from the (non-existent) recognizer back into it.
+
+**Known correctness issues to fix when touching nearby code:**
+
+- The key-event handler's `else` branch calls `filterAndAccept()` on every non-F12 key while inactive, which would swallow normal typing. The eat-keys behavior should only apply while `active_` is true.
+- The hotkey is hardcoded to `FcitxKey_F12`. There is no `FCITX_CONFIGURATION` struct, no `getConfig()` / `setConfig()` override, so `voiceinput.conf`'s `Hotkey=` line is decorative. See `quickphrase/quickphrase.h`'s `QuickPhraseConfig` (`KeyListOption`) for the canonical pattern.
+- `_()` is used for translatable strings, but no i18n domain is registered (`registerDomain()`) and no gettext catalog or `fcitx5_install_translation` call exists.
+- `pkg_check_modules(PULSEAUDIO libpulse-simple)` in the root `CMakeLists.txt` is not `REQUIRED`, but `${PULSEAUDIO_LIBRARIES}` is linked unconditionally. Either mark it required or guard the link.
+- `src/voiceinput.conf` is installed into `configdesc/` (`src/CMakeLists.txt`) but it is not in the format Fcitx expects for a config descriptor; the descriptor should be generated from a `Configuration` struct.
+
+When implementing real behavior, prefer this order to minimize churn:
+
+1. PulseAudio capture in `AudioCapture` (worker thread, push PCM frames).
+2. Pick a recognizer backend, implement `SpeechRecognizer::start/stop`, deliver results via `ResultCB` on the Fcitx event loop (use `Instance::eventDispatcher()` to hop back from worker threads safely).
+3. Construct `recognizer_` in `VoiceInputModule`'s constructor and uncomment the `start`/`stop` calls.
+4. Fix the key-eating bug.
+5. Add `FCITX_CONFIGURATION` for the hotkey; replace the stub `voiceinput.conf` with a generated descriptor.
+6. Register an i18n domain (or drop `_()` until translations exist).
+
+---
+
+### 4. Tests, Linting, and Single-Test Runs
 
 - There is currently no automated unit-test or integration-test suite in this repository.
 - There is no configured static-analysis or lint target (no `.clang-format`, no CTest, no dedicated lint target in `CMakeLists.txt`).
 - The main validation path today is manual functional testing inside a running Fcitx5 session:
   - Build and install the addon.
   - Restart Fcitx5 (`fcitx5 -r`).
-  - Focus a text field, press the configured hotkey (defaults to `F12` in code), and verify behavior.
+  - Focus a text field, press the hotkey (currently hardcoded to `F12` — see Implementation Status), and verify behavior.
 - Because no formal tests exist, there is no "run a single test" command at this time.
 
 When adding tests in the future (e.g., via CTest or a separate test runner), prefer naming that makes it easy to run a single test case (e.g., `ctest -R VoiceInput_*`).
 
 ---
 
-### 4. Agent-Specific Workflow Rules
+### 5. Agent-Specific Workflow Rules
 
 - Treat this `AGENTS.md` as the single source of truth for agent behavior in this repo.
 - Ask the user to execute the build when you need to verify behavior, instead of unilaterally running build or install commands yourself.
@@ -109,7 +146,7 @@ As of this revision there are no Cursor rules under `.cursor/rules/` or `.cursor
 
 ---
 
-### 5. C++ Code Style and Conventions
+### 6. C++ Code Style and Conventions
 
 The style is based on upstream Fcitx5 modules (see `quickphrase/*.cpp`) with a few project-local patterns (see `src/voiceinput-module.*`).
 Match the existing surrounding code rather than enforcing a new global style.
@@ -135,7 +172,7 @@ Match the existing surrounding code rather than enforcing a new global style.
 
 - Fcitx core types live in namespace `fcitx`.
 - The `QuickPhrase`-related classes live fully inside `namespace fcitx { ... }`.
-- The voice-input module currently declares `SpeechRecognizer` and `AudioCapture` in the global namespace; keep new related types consistent with that choice unless you perform a coordinated refactor.
+- The voice-input module currently declares `VoiceInputModule`, `SpeechRecognizer`, and `AudioCapture` in the global namespace. Only the `VoiceInputModuleFactory` lives inside `namespace fcitx { ... }`. Keep new related types consistent with that choice unless you perform a coordinated refactor.
 - For addon classes, inherit from `fcitx::AddonInstance` and register them using `FCITX_ADDON_FACTORY_V2` as shown in `voiceinput-module.cpp` and `quickphrase.cpp`.
 
 **Naming conventions**
@@ -171,7 +208,7 @@ if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
 
 ---
 
-### 6. Fcitx-Specific Patterns to Follow
+### 7. Fcitx-Specific Patterns to Follow
 
 - Register key-event watchers via `Instance::watchEvent`, with appropriate `EventWatcherPhase`.
 - For features that maintain per-input-context state, use `InputContextProperty` and factories, as in `QuickPhraseState`.
@@ -180,7 +217,7 @@ if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
 
 ---
 
-### 7. When Editing or Adding Files
+### 8. When Editing or Adding Files
 
 - Stick to ASCII in source files unless you have a specific reason to use non-ASCII and the surrounding file already does so.
 - Add SPDX-style license headers only if you are aligning with existing upstream practice and the file currently uses such a header.
