@@ -4,13 +4,16 @@ add_fcitx5_addon(voiceinput
   audio_capture.cpp
 )
 
-target_link_libraries(voiceinput PRIVATE
-  Fcitx5::Core
-  ${PULSEAUDIO_LIBRARIES}
-  CURL::libcurl
-)
+target_link_libraries(voiceinput PRIVATE Fcitx5::Core)
 
-target_include_directories(voiceinput PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
+if(PULSEAUDIO_FOUND)
+  target_link_libraries(voiceinput PRIVATE ${PULSEAUDIO_LIBRARIES})
+  target_include_directories(voiceinput PRIVATE ${PULSEAUDIO_INCLUDE_DIRS})
+endif()
+
+if(CURL_FOUND)
+  target_link_libraries(voiceinput PRIVATE CURL::libcurl)
+endif()
 
 install(TARGETS voiceinput
   LIBRARY DESTINATION ${FCITX_INSTALL_ADDONDIR})
