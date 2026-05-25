@@ -1,0 +1,24 @@
+name: Publish to AUR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'aur/PKGBUILD'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: fcitx5-voice-input-git
+          pkgbuild: ./aur/PKGBUILD
+          commit_username: diginatu
+          commit_email: diginatu.510o@gmail.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update AUR package
+          ssh_keyscan_types: rsa,ecdsa,ed25519
