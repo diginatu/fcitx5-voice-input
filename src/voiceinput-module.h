@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+namespace fcitx { struct EventSourceTime; }
+
 class SpeechRecognizer;
 class AudioCapture;
 
@@ -44,4 +46,5 @@ private:
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;
   std::vector<uint8_t> lastRecording_;
+  std::unique_ptr<fcitx::EventSourceTime> errorTimer_;
 };

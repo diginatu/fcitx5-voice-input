@@ -10,10 +10,12 @@
 #include <fcitx/instance.h>
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
+#include <fcitx-utils/event.h>
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
 
+#include <ctime>
 #include <utility>
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
@@ -64,6 +66,7 @@ void VoiceInputModule::registerEventWatchers() {
 }
 
 void VoiceInputModule::startListening() {
+  errorTimer_.reset();
   if (!audioCapture_->start()) {
     FCITX_WARN() << "voiceinput: failed to start audio capture";
     showIndicator("Audio init failed");
@@ -76,11 +79,12 @@ void VoiceInputModule::startListening() {
 void VoiceInputModule::finishRecording() {
   lastRecording_ = audioCapture_->stop();
   FCITX_INFO() << "voiceinput: captured " << lastRecording_.size() << " bytes";
-  hideIndicator();
   active_ = false;
   if (lastRecording_.empty()) {
+    hideIndicator();
     return;
   }
+  showIndicator("Transcribing…");
   auto wav = std::move(lastRecording_);
   auto *dispatcher = &instance_->eventDispatcher();
   recognizer_->transcribe(
@@ -89,9 +93,21 @@ void VoiceInputModule::finishRecording() {
         dispatcher->schedule(
             [this, text = std::move(text)]() { onSpeechResult(text); });
       },
-      [dispatcher](std::string err) {
-        dispatcher->schedule([err = std::move(err)]() {
+      [this, dispatcher](std::string err) {
+        dispatcher->schedule([this, err = std::move(err)]() {
           FCITX_WARN() << "voiceinput: STT error: " << err;
+          showIndicator("Error: " + err);
+          struct timespec ts;
+          clock_gettime(CLOCK_MONOTONIC, &ts);
+          uint64_t usec = static_cast<uint64_t>(ts.tv_sec) * 1'000'000ULL +
+                          static_cast<uint64_t>(ts.tv_nsec) / 1000ULL +
+                          3'000'000ULL;
+          errorTimer_ = instance_->eventLoop().addTimeEvent(
+              CLOCK_MONOTONIC, usec, 0,
+              [this](fcitx::EventSourceTime *, uint64_t) -> bool {
+                hideIndicator();
+                return true;
+              });
         });
       });
 }
