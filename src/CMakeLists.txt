@@ -19,6 +19,3 @@ install(TARGETS voiceinput
 configure_file(voiceinput.conf.in voiceinput.conf @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/voiceinput.conf
   DESTINATION ${FCITX_INSTALL_PKGDATADIR}/addon)
-
-install(FILES voiceinput.conf
-  DESTINATION ${FCITX_INSTALL_PKGDATADIR}/configdesc)

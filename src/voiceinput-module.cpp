@@ -1,6 +1,7 @@
 #include "voiceinput-module.h"
 #include "audio_capture.h"
 #include "speech_recognizer.h"
+#include <fcitx-config/iniparser.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h> // For AddonManager
 #include <fcitx/event.h>       // For fcitx::Event
@@ -16,22 +17,31 @@
 #include <utility>
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
-    : instance_(instance),
-      recognizer_(std::make_unique<SpeechRecognizer>(
-          "http://localhost:9000/asr?output=txt&encode=false")),
-      audioCapture_(std::make_unique<AudioCapture>()) {
+    : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
+  reloadConfig();
+  recognizer_ = std::make_unique<SpeechRecognizer>(config_.endpoint.value());
   registerEventWatchers();
 }
 
 VoiceInputModule::~VoiceInputModule() = default;
+
+void VoiceInputModule::reloadConfig() {
+  fcitx::readAsIni(config_, "conf/voiceinput.conf");
+}
+
+void VoiceInputModule::setConfig(const fcitx::RawConfig &config) {
+  config_.load(config, true);
+  fcitx::safeSaveAsIni(config_, "conf/voiceinput.conf");
+  recognizer_ = std::make_unique<SpeechRecognizer>(config_.endpoint.value());
+}
 
 void VoiceInputModule::registerEventWatchers() {
   eventHandlers_.emplace_back(instance_->watchEvent(
       fcitx::EventType::InputContextKeyEvent,
       fcitx::EventWatcherPhase::PreInputMethod, [this](fcitx::Event &event) {
         auto &ke = static_cast<fcitx::KeyEvent &>(event);
-        // Example: F12 triggers
-        if (!ke.isRelease() && ke.key().sym() == FcitxKey_F12) {
+        if (!ke.isRelease() &&
+            ke.key().checkKeyList(config_.activationKey.value())) {
           if (!active_) {
             ke.filterAndAccept();
             startListening();
@@ -41,8 +51,8 @@ void VoiceInputModule::registerEventWatchers() {
             finishRecording();
           }
         } else if (active_) {
-          // Allow ESC to cancel while active
-          if (!ke.isRelease() && ke.key().sym() == FcitxKey_Escape) {
+          if (!ke.isRelease() &&
+              ke.key().checkKeyList(config_.cancelKey.value())) {
             ke.filterAndAccept();
             cancel();
           } else {

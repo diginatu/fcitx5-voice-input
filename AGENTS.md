@@ -10,10 +10,9 @@ Read this fully before making code or build changes.
 - C++20 project that implements a Fcitx5 addon for voice input.
 - Build system is CMake; `Makefile` wraps configuration and Ninja builds.
 - Main custom module lives in `src/` (`voiceinput-module.*`, `audio_capture.*`, `speech_recognizer.*`, `wav_header.h`).
-- Runtime flow: a global hotkey (currently hardcoded to `F12`) starts listening, audio is captured via PulseAudio into an in-memory WAV buffer (`lastRecording_`), the buffer is POSTed as `multipart/form-data` (field `audio_file`) to a Whisper-compatible HTTP endpoint via libcurl on a detached worker thread (default `http://localhost:9000/asr?output=txt&encode=false`), and the resulting transcript is dispatched back to the Fcitx event loop and committed to the active input context.
+- Runtime flow: a configurable hotkey (default `F12`) starts listening, audio is captured via PulseAudio into an in-memory WAV buffer (`lastRecording_`), the buffer is POSTed as `multipart/form-data` (field `audio_file`) to a Whisper-compatible HTTP endpoint via libcurl on a detached worker thread (default `http://localhost:9000/asr?output=txt&encode=false`), and the resulting transcript is dispatched back to the Fcitx event loop and committed to the active input context.
 - Addon descriptor template: `src/voiceinput.conf.in` (configured via CMake to produce `voiceinput.conf` for `addon/`).
-- User-facing config description: `src/voiceinput.conf` (installed to `configdesc/`). NOTE: this file is currently a flat key=value stub, not a real Fcitx config descriptor — see Implementation Status.
-- `conf/default.yaml` exists but is not loaded by anything; treat it as a placeholder until a config loader is added or remove it.
+- User-facing configuration schema: defined in C++ via `FCITX_CONFIGURATION` in `src/voiceinput_config.h` (`VoiceInputConfig` — `ActivationKey`, `CancelKey`, `Endpoint`). Exposed at runtime via `VoiceInputModule::getConfig()` / `setConfig()`; persisted to `~/.config/fcitx5/conf/voiceinput.conf` via `readAsIni` / `safeSaveAsIni`.
 - The `quickphrase/` directory is vendored code from upstream Fcitx kept as a reference implementation. It is NOT wired into the root `CMakeLists.txt` and is not built — do not assume changes there have any effect on the produced addon.
 - Icon assets live under `data/icons/` (e.g. `microphone.svg`).
 
@@ -86,30 +85,28 @@ Agents should not assume `fcitx5` is available on the host; mention this to the 
 
 ### 3. Current Implementation Status
 
-The addon loads, registers the F12 hotkey, shows a status indicator, records audio in memory via PulseAudio, uploads the WAV to a Whisper-compatible HTTP endpoint, and commits the returned transcript to the focused input context. Before designing changes, read the source — do not assume anything beyond the documented state works.
+The addon loads, registers a configurable activation hotkey (default `F12`), shows a status indicator, records audio in memory via PulseAudio, uploads the WAV to a Whisper-compatible HTTP endpoint, and commits the returned transcript to the focused input context. Before designing changes, read the source — do not assume anything beyond the documented state works.
 
 **Implemented:**
 
 - `src/audio_capture.{h,cpp}` — real PulseAudio capture using `pa_simple_*` on a worker thread. `start()` opens an `S16LE / 16 kHz / mono` record stream; `stop()` joins the worker and returns a WAV-wrapped `std::vector<uint8_t>` (RIFF header + PCM payload) ready for upload.
 - `src/wav_header.h` — pure `buildWavHeader(pcmByteCount, sampleRate, channels, bitsPerSample)` returning the 44-byte RIFF/fmt/data header. Unit-tested via `tests/wav_header_test.cpp`.
 - `src/speech_recognizer.{h,cpp}` — async HTTP client. `transcribe(wav, onResult, onError)` spawns a detached `std::thread` per request that POSTs the WAV via libcurl's easy + mime API (multipart field `audio_file`, MIME `audio/wav`) with a 60s timeout. The static worker takes everything by value so the recognizer object can be destroyed while a request is in flight. `curl_global_init` is guarded by `std::once_flag`. The header also exposes an inline `trimTranscript()` helper (trailing-whitespace strip) so tests don't need to link libcurl. Unit-tested via `tests/speech_recognizer_test.cpp`.
-- `src/voiceinput-module.{h,cpp}` — constructs `audioCapture_` and `recognizer_` (with the hardcoded URL) in the ctor. `startListening()` opens the capture; F12-while-active runs `finishRecording()`, which hides the indicator, moves the WAV into `recognizer_->transcribe(...)`, and wraps both callbacks with `instance_->eventDispatcher().schedule(...)` so the result hits the Fcitx main thread before reaching `onSpeechResult()` (which commits via `InputContext::commitString`). ESC-while-active runs `cancel()`, which stops capture and discards the buffer; ESC during the STT request has no effect (the user cannot cancel an in-flight upload — by design).
+- `src/voiceinput_config.h` — `VoiceInputConfig` declared via `FCITX_CONFIGURATION`, exposing three options: `ActivationKey` (`KeyListOption`, default `[F12]`), `CancelKey` (`KeyListOption`, default `[Escape]`), `Endpoint` (`Option<std::string>`, default `http://localhost:9000/asr?output=txt&encode=false`). Header-only so `tests/voiceinput_config_test.cpp` exercises it without linking the full addon.
+- `src/voiceinput-module.{h,cpp}` — constructs `audioCapture_` and `recognizer_` (with the endpoint from `config_`) in the ctor; `reloadConfig()` reads `conf/voiceinput.conf` from the Fcitx config dir via `readAsIni`; `setConfig()` persists via `safeSaveAsIni` and rebuilds `recognizer_` so URL changes take effect immediately (any in-flight request keeps its old URL by value). `getConfig()` returns `&config_` so Fcitx's config tool can introspect the schema at runtime — no `configdesc/` file is installed. `startListening()` opens the capture; pressing the activation key while active runs `finishRecording()`, which hides the indicator, moves the WAV into `recognizer_->transcribe(...)`, and wraps both callbacks with `instance_->eventDispatcher().schedule(...)` so the result hits the Fcitx main thread before reaching `onSpeechResult()` (which commits via `InputContext::commitString`). The cancel key while active runs `cancel()`, which stops capture and discards the buffer; the cancel key during the STT request has no effect (the user cannot cancel an in-flight upload — by design). Key matching uses `key().checkKeyList(config_.X.value())`, mirroring `quickphrase/quickphrase.cpp:84`.
 - Root `CMakeLists.txt` — `pkg_check_modules(PULSEAUDIO REQUIRED libpulse-simple)`, `find_package(CURL REQUIRED)`, `enable_testing()`, `add_subdirectory(tests)`. `src/CMakeLists.txt` unconditionally links `CURL::libcurl`.
 
 **Known correctness issues to fix when touching nearby code:**
 
-- The hotkey is hardcoded to `FcitxKey_F12` and the STT endpoint URL is hardcoded in `VoiceInputModule`'s ctor. There is no `FCITX_CONFIGURATION` struct, no `getConfig()` / `setConfig()` override, so `voiceinput.conf`'s `Hotkey=` line is decorative. See `quickphrase/quickphrase.h`'s `QuickPhraseConfig` (`KeyListOption`) for the canonical pattern.
-- `_()` is used for translatable strings, but no i18n domain is registered (`registerDomain()`) and no gettext catalog or `fcitx5_install_translation` call exists.
-- `src/voiceinput.conf` is installed into `configdesc/` (`src/CMakeLists.txt`) but it is not in the format Fcitx expects for a config descriptor; the descriptor should be generated from a `Configuration` struct.
-- There is no user-visible "Transcribing…" indicator between `finishRecording()` and the result callback — the indicator is hidden immediately on the second F12 press.
+- `_()` is not used anywhere yet; config labels are plain English. No i18n domain is registered (`registerDomain()`) and no gettext catalog or `fcitx5_install_translation` call exists. Add the domain before introducing `_()` macros.
+- There is no user-visible "Transcribing…" indicator between `finishRecording()` and the result callback — the indicator is hidden immediately on the second hotkey press.
 - STT errors are only logged via `FCITX_WARN`; the user gets no on-screen feedback when the server is unreachable or returns non-2xx.
 
 Suggested next steps (rough order, to minimize churn):
 
-1. Add `FCITX_CONFIGURATION` for the hotkey **and** the STT endpoint URL; replace the stub `voiceinput.conf` with a generated descriptor.
-2. Show a "Transcribing…" indicator while the HTTP request is in flight and a brief error indicator on failure.
-3. Register an i18n domain (or drop `_()` until translations exist).
-4. Decide whether to support cancelling an in-flight STT request (currently not supported by design — would require libcurl multi + a progress callback).
+1. Show a "Transcribing…" indicator while the HTTP request is in flight and a brief error indicator on failure.
+2. Register an i18n domain and wrap user-visible strings (including config labels in `VoiceInputConfig`) in `_()`.
+3. Decide whether to support cancelling an in-flight STT request (currently not supported by design — would require libcurl multi + a progress callback).
 
 ---
 
@@ -119,12 +116,14 @@ Suggested next steps (rough order, to minimize churn):
 - Current coverage:
   - `tests/wav_header_test.cpp` exercises `src/wav_header.h` (magic bytes, sample rate, channels, bit depth, byte rate, block align, RIFF/data sizes).
   - `tests/speech_recognizer_test.cpp` exercises `trimTranscript()` from `src/speech_recognizer.h` (trailing whitespace stripping; leading whitespace preserved; empty/all-whitespace edge cases). The test only includes the header — it does not link libcurl — so keep any new test-only helpers `inline` in the header.
+  - `tests/voiceinput_config_test.cpp` exercises `VoiceInputConfig` defaults (`ActivationKey=F12`, `CancelKey=Escape`, the documented endpoint URL) and a simple `RawConfig` round-trip for the endpoint. Links `Fcitx5::Core` + `Fcitx5::Utils`.
   - Pure-function tests like these should also be mutation-checked (briefly break the implementation, confirm the test fails, revert) per the global TDD guideline.
 - PulseAudio capture, the libcurl POST, and the Fcitx5 addon path are still verified manually inside a running Fcitx5 session:
-  - Make sure a Whisper-compatible server is reachable at the endpoint hardcoded in `VoiceInputModule`'s ctor (default `http://localhost:9000/asr`).
+  - Make sure a Whisper-compatible server is reachable at the configured endpoint (default `http://localhost:9000/asr?output=txt&encode=false`).
   - Build and install the addon.
   - Restart Fcitx5 (`fcitx5 -r`).
-  - Focus a text field, press the hotkey (currently hardcoded to `F12` — see Implementation Status), speak, press F12 again. Confirm the `FCITX_INFO` log shows a recorded byte count roughly equal to `44 + 32000 * seconds_spoken`. Within ~1–3s the transcript should be committed into the focused field. STT errors appear as `voiceinput: STT error: …` via `FCITX_WARN`. ESC during recording cancels and discards the buffer; ESC during an in-flight STT request has no effect.
+  - (Optional) Open `fcitx5-configtool` → Addons → Voice Input → Configure to change the activation key, cancel key, or endpoint URL. Changes persist to `~/.config/fcitx5/conf/voiceinput.conf`.
+  - Focus a text field, press the activation key (default F12), speak, press the activation key again. Confirm the `FCITX_INFO` log shows a recorded byte count roughly equal to `44 + 32000 * seconds_spoken`. Within ~1–3s the transcript should be committed into the focused field. STT errors appear as `voiceinput: STT error: …` via `FCITX_WARN`. The cancel key (default Escape) during recording cancels and discards the buffer; the cancel key during an in-flight STT request has no effect.
 - No `.clang-format` or static-analysis target is configured.
 
 **Running tests**
@@ -145,7 +144,7 @@ When adding new tests, place them under `tests/`, register them in `tests/CMakeL
 - Ask the user to execute the build when you need to verify behavior, instead of unilaterally running build or install commands yourself.
 - When you suggest running commands, prefer `make`, `make clean`, and `make install` from the repo root.
 - Treat `quickphrase/` sources as upstream vendor code; avoid style churn or refactors there unless the change is clearly required.
-- Prefer implementing new voice-input behavior under `src/` and new configuration under `conf/`.
+- Prefer implementing new voice-input behavior under `src/`. New user-facing configuration options should be added to `VoiceInputConfig` in `src/voiceinput_config.h`; they are automatically surfaced in `fcitx5-configtool` and persisted to `~/.config/fcitx5/conf/voiceinput.conf`.
 - Do not add new external dependencies without calling that out explicitly to the user and updating `CMakeLists.txt` and installation docs.
 
 As of this revision there are no Cursor rules under `.cursor/rules/` or `.cursorrules`, and no GitHub Copilot instruction file at `.github/copilot-instructions.md`.

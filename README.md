@@ -164,8 +164,15 @@ The libcurl HTTP path and the Fcitx5 addon integration are not unit-tested; veri
 
 ## Configuration
 
--   `src/voiceinput-addon.conf.in`: This is the addon descriptor file. It tells Fcitx5 the name of the module, its category (`Module`), and the library to load (`voiceinput`).
--   `src/voiceinput.conf`: This file defines user-configurable options that will appear in the Fcitx5 configuration tool, such as the hotkey to trigger voice input.
+The addon exposes three user-configurable options, defined in `src/voiceinput_config.h` via the `FCITX_CONFIGURATION` macro. Edit them from `fcitx5-configtool` → Addons → Voice Input → Configure (or the Plasma input-method module). Changes are persisted to `~/.config/fcitx5/conf/voiceinput.conf`.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `ActivationKey` | `F12` | Key (or list of keys) that toggles recording on and off. |
+| `CancelKey` | `Escape` | Key (or list of keys) that aborts an active recording. Has no effect once the WAV has been sent to the STT server. |
+| `Endpoint` | `http://localhost:9000/asr?output=txt&encode=false` | Whisper-compatible HTTP endpoint that receives the WAV as multipart/form-data (field `audio_file`). Changing it rebuilds the in-process recognizer on save; in-flight requests keep using their original URL. |
+
+The addon descriptor itself (`src/voiceinput.conf.in` → installed to `addon/`) marks the addon as `Configurable=True`. The configuration schema is exposed at runtime via `VoiceInputModule::getConfig()`, so no separate `configdesc/` file is needed.
 
 ## Core Implementation Concepts
 
