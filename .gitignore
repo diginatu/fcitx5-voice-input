@@ -11,3 +11,6 @@ compile_commands.json
 
 # Temporary reference files
 quickphrase/
+
+# AUR packaging build tree
+aur/pkg/

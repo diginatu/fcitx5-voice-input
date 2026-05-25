@@ -98,15 +98,13 @@ The addon loads, registers a configurable activation hotkey (default `F12`), sho
 
 **Known correctness issues to fix when touching nearby code:**
 
-- `_()` is not used anywhere yet; config labels are plain English. No i18n domain is registered (`registerDomain()`) and no gettext catalog or `fcitx5_install_translation` call exists. Add the domain before introducing `_()` macros.
 - There is no user-visible "Transcribing…" indicator between `finishRecording()` and the result callback — the indicator is hidden immediately on the second hotkey press.
 - STT errors are only logged via `FCITX_WARN`; the user gets no on-screen feedback when the server is unreachable or returns non-2xx.
 
 Suggested next steps (rough order, to minimize churn):
 
 1. Show a "Transcribing…" indicator while the HTTP request is in flight and a brief error indicator on failure.
-2. Register an i18n domain and wrap user-visible strings (including config labels in `VoiceInputConfig`) in `_()`.
-3. Decide whether to support cancelling an in-flight STT request (currently not supported by design — would require libcurl multi + a progress callback).
+2. Decide whether to support cancelling an in-flight STT request (currently not supported by design — would require libcurl multi + a progress callback).
 
 ---
 
