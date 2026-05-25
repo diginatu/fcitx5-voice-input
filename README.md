@@ -4,6 +4,28 @@ A Fcitx5 module that enables voice input via a global hotkey. It's designed as a
 
 Press a hotkey, speak, and the recognized text will be committed to your currently focused application.
 
+## Installation
+
+### Arch Linux / Manjaro (AUR)
+
+```bash
+# Using an AUR helper
+paru -S fcitx5-voice-input-git
+# or
+yay -S fcitx5-voice-input-git
+
+# Manual AUR install
+git clone https://aur.archlinux.org/fcitx5-voice-input-git.git
+cd fcitx5-voice-input-git
+makepkg -si
+```
+
+After installing, restart Fcitx5 (`fcitx5 -r`) and start a Whisper-compatible server (see **Prerequisites → Speech Recognition Server**).
+
+### From Source
+
+See **Build and Install** below.
+
 ## High-level Architecture
 
 - The module loads with Fcitx5 and registers a global hotkey (currently hardcoded to `F12`).
