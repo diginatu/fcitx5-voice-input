@@ -104,17 +104,31 @@ See **Prerequisites** above for the packages you need to install first.
 
 **1. Build**
 
-The repo ships a `Makefile` wrapper that configures a fresh Debug build with Ninja and `CMAKE_INSTALL_PREFIX=/usr`. From the repo root:
+The repo ships a `Makefile` wrapper. From the repo root:
 
 ```bash
-make           # fresh debug build into ./build via cmake + ninja
+make                # fresh debug build into ./build via cmake + ninja
+make build-release  # optimized release build (matches the AUR PKGBUILD)
 ```
 
-**2. Install and Run**
+**2. Test**
+
+```bash
+make test           # build if needed, then run ctest --output-on-failure
+```
+
+**3. Install and Run**
 
 ```bash
 sudo make install
-fcitx5 -r # Restart fcitx5 to load the new addon
+fcitx5 -r           # restart Fcitx5 to load the new addon
+```
+
+**4. Publish to AUR**
+
+```bash
+make publish        # bump pkgver in aur/PKGBUILD, commit, and push
+                    # pushing triggers the aur-publish GitHub Actions workflow
 ```
 ## Usage
 
@@ -136,11 +150,10 @@ The addon logs to wherever your Fcitx5 instance logs (e.g. `journalctl --user -u
 Unit tests are built alongside the addon and registered with CTest:
 
 ```bash
-cd build
-ctest --output-on-failure          # run all tests
-ctest -R wav_header_test           # run a single test by name
-ctest -R speech_recognizer_test
-ctest -R voiceinput_config_test
+make test                          # build if needed, then run all tests
+cd build && ctest -R wav_header_test           # single test by name
+cd build && ctest -R speech_recognizer_test
+cd build && ctest -R voiceinput_config_test
 ```
 
 Current coverage:

@@ -38,18 +38,19 @@ sudo apt install build-essential cmake ninja-build gettext pkg-config \
 - Fresh debug build via `Makefile` (recommended during development):
 
 ```bash
-make          # runs the "build" target
+make          # fresh debug build into ./build via cmake + ninja
 ```
 
-- The `build` target performs:
+- Optimized release build (matches the AUR PKGBUILD):
 
 ```bash
-rm -fr build && mkdir build && cd build && \
-  cmake -G Ninja .. \
-    -DCMAKE_BUILD_TYPE=Debug \
-    -DCMAKE_INSTALL_PREFIX=/usr \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=1 && \
-  ninja
+make build-release
+```
+
+- Run tests (builds first if `./build` is absent):
+
+```bash
+make test
 ```
 
 - Clean build directory:
@@ -62,6 +63,12 @@ make clean
 
 ```bash
 make install
+```
+
+- Publish to AUR (bumps `pkgver` in `aur/PKGBUILD`, commits, and pushes — triggers `aur-publish.yml`):
+
+```bash
+make publish
 ```
 
 **Alternative manual CMake build (without `Makefile`)**
