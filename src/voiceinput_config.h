@@ -37,4 +37,6 @@ FCITX_CONFIGURATION(
         this, "Model", "Model (OpenAI-compatible backends)",
         "Systran/faster-whisper-small"};
     fcitx::Option<std::string> apiKey{
-        this, "ApiKey", "API key (OpenAI-compatible backends)", ""};);
+        this, "ApiKey", "API key (OpenAI-compatible backends)", ""};
+    fcitx::Option<std::string> prompt{
+        this, "Prompt", "Prompt (OpenAI-compatible backends)", ""};);

@@ -61,6 +61,26 @@ int main() {
         expectBool(spec.sendModel, true, "openai sends model");
         expectBool(spec.sendResponseFormatText, true, "openai response_format=text");
         expectBool(spec.sendAuthHeader, false, "openai no auth without key");
+        expectBool(spec.sendPrompt, false, "openai no prompt when empty");
+    }
+
+    // OpenAI-compatible backend with a prompt set: send the prompt field.
+    {
+        RecognizerConfig cfg;
+        cfg.openAiCompatible = true;
+        cfg.model = "whisper-1";
+        cfg.prompt = "technical jargon, ACME Corp";
+        RequestSpec spec = buildRequestSpec(cfg);
+        expectBool(spec.sendPrompt, true, "openai sends prompt when set");
+    }
+
+    // Whisper backend ignores the prompt field even when set.
+    {
+        RecognizerConfig cfg;
+        cfg.openAiCompatible = false;
+        cfg.prompt = "ignored";
+        RequestSpec spec = buildRequestSpec(cfg);
+        expectBool(spec.sendPrompt, false, "whisper no prompt");
     }
 
     // OpenAI-compatible backend with an API key set.

@@ -27,7 +27,7 @@ void SpeechRecognizer::transcribe(std::vector<uint8_t> wav, ResultCB onResult,
     std::thread([wav = std::move(wav), onResult = std::move(onResult),
                  onError = std::move(onError), url = config_.endpoint,
                  spec = std::move(spec), model = config_.model,
-                 apiKey = config_.apiKey]() mutable {
+                 apiKey = config_.apiKey, prompt = config_.prompt]() mutable {
         CURL *curl = curl_easy_init();
         if (!curl) {
             onError("curl_easy_init failed");
@@ -52,6 +52,11 @@ void SpeechRecognizer::transcribe(std::vector<uint8_t> wav, ResultCB onResult,
             curl_mimepart *fmtPart = curl_mime_addpart(mime);
             curl_mime_name(fmtPart, "response_format");
             curl_mime_data(fmtPart, "text", CURL_ZERO_TERMINATED);
+        }
+        if (spec.sendPrompt) {
+            curl_mimepart *promptPart = curl_mime_addpart(mime);
+            curl_mime_name(promptPart, "prompt");
+            curl_mime_data(promptPart, prompt.c_str(), CURL_ZERO_TERMINATED);
         }
 
         struct curl_slist *headers = nullptr;

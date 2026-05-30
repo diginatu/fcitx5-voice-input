@@ -72,7 +72,7 @@ docker run -d -p 9000:9000 --name whisper \
   onerahmet/openai-whisper-asr-webservice:latest
 ```
 
-**2. OpenAI-compatible (speaches / OpenAI).** Any server implementing the OpenAI `POST /v1/audio/transcriptions` API, such as [speaches](https://github.com/speaches-ai/speaches). Set **API format** to *OpenAI-compatible*, point **Endpoint** at e.g. `http://localhost:8000/v1/audio/transcriptions`, and set **Model** to a model the server has loaded (e.g. `Systran/faster-whisper-small`). If the server requires authentication, set **API key** (sent as `Authorization: Bearer <key>`). The addon sends the audio as multipart field `file`, includes the `model` field, and requests `response_format=text`.
+**2. OpenAI-compatible (speaches / OpenAI).** Any server implementing the OpenAI `POST /v1/audio/transcriptions` API, such as [speaches](https://github.com/speaches-ai/speaches). Set **API format** to *OpenAI-compatible*, point **Endpoint** at e.g. `http://localhost:8000/v1/audio/transcriptions`, and set **Model** to a model the server has loaded (e.g. `Systran/faster-whisper-small`). If the server requires authentication, set **API key** (sent as `Authorization: Bearer <key>`). Optionally set a **Prompt** to bias the transcription (e.g. domain vocabulary or proper nouns); when non-empty it is sent as the `prompt` field. The addon sends the audio as multipart field `file`, includes the `model` field, and requests `response_format=text`.
 
 The endpoint URL is currently hardcoded in `VoiceInputModule`'s constructor (`src/voiceinput-module.cpp`); making it user-configurable is tracked together with the hardcoded F12 hotkey.
 
@@ -178,6 +178,7 @@ The addon exposes the following user-configurable options, defined in `src/voice
 | `Endpoint` | `http://localhost:9000/asr?output=txt&encode=false` | HTTP endpoint that receives the WAV as multipart/form-data. For the Whisper backend the audio field is `audio_file`; for the OpenAI-compatible backend it is `file`. Changing it rebuilds the in-process recognizer on save; in-flight requests keep using their original config. |
 | `Model` | `Systran/faster-whisper-small` | Model name sent to OpenAI-compatible backends (ignored by the Whisper backend). |
 | `ApiKey` | (empty) | When set, sent as `Authorization: Bearer <key>` to OpenAI-compatible backends. Leave empty if the server needs no auth. |
+| `Prompt` | (empty) | When set, sent as the `prompt` field to OpenAI-compatible backends to bias transcription (e.g. domain vocabulary, proper nouns). Ignored by the Whisper backend. |
 
 The addon descriptor itself (`src/voiceinput.conf.in` → installed to `addon/`) marks the addon as `Configurable=True`. The configuration schema is exposed at runtime via `VoiceInputModule::getConfig()`, so no separate `configdesc/` file is needed.
 

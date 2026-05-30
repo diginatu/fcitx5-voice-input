@@ -34,6 +34,7 @@ int main() {
     assert(config.apiFormat.value() == ApiFormat::WhisperAsrWebservice);
     assert(config.model.value() == "Systran/faster-whisper-small");
     assert(config.apiKey.value().empty());
+    assert(config.prompt.value().empty());
 
     std::cout << "voiceinput_config_test: OK" << std::endl;
     return 0;

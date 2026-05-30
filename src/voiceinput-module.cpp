@@ -27,6 +27,7 @@ std::unique_ptr<SpeechRecognizer> makeRecognizer(const VoiceInputConfig &config)
   rc.openAiCompatible = config.apiFormat.value() == ApiFormat::OpenAICompatible;
   rc.model = config.model.value();
   rc.apiKey = config.apiKey.value();
+  rc.prompt = config.prompt.value();
   return std::make_unique<SpeechRecognizer>(std::move(rc));
 }
 } // namespace

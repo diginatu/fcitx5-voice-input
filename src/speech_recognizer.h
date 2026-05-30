@@ -14,6 +14,7 @@ struct RecognizerConfig {
     bool openAiCompatible = false;
     std::string model;
     std::string apiKey;
+    std::string prompt;
 };
 
 // Asynchronous speech-to-text client.
@@ -47,6 +48,7 @@ struct RequestSpec {
     bool sendModel = false;             // add a "model" form field
     bool sendResponseFormatText = false; // add response_format=text form field
     bool sendAuthHeader = false;        // add "Authorization: Bearer <key>"
+    bool sendPrompt = false;            // add a "prompt" form field
 };
 
 inline RequestSpec buildRequestSpec(const RecognizerConfig &cfg) {
@@ -56,6 +58,7 @@ inline RequestSpec buildRequestSpec(const RecognizerConfig &cfg) {
         spec.sendModel = true;
         spec.sendResponseFormatText = true;
         spec.sendAuthHeader = !cfg.apiKey.empty();
+        spec.sendPrompt = !cfg.prompt.empty();
     } else {
         spec.fileFieldName = "audio_file";
     }
