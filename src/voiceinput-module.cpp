@@ -18,10 +18,23 @@
 #include <ctime>
 #include <utility>
 
+namespace {
+// Build the SpeechRecognizer from the current addon configuration, translating
+// the API-format enum into the recognizer's backend flag.
+std::unique_ptr<SpeechRecognizer> makeRecognizer(const VoiceInputConfig &config) {
+  RecognizerConfig rc;
+  rc.endpoint = config.endpoint.value();
+  rc.openAiCompatible = config.apiFormat.value() == ApiFormat::OpenAICompatible;
+  rc.model = config.model.value();
+  rc.apiKey = config.apiKey.value();
+  return std::make_unique<SpeechRecognizer>(std::move(rc));
+}
+} // namespace
+
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
     : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
   reloadConfig();
-  recognizer_ = std::make_unique<SpeechRecognizer>(config_.endpoint.value());
+  recognizer_ = makeRecognizer(config_);
   registerEventWatchers();
 }
 
@@ -34,7 +47,7 @@ void VoiceInputModule::reloadConfig() {
 void VoiceInputModule::setConfig(const fcitx::RawConfig &config) {
   config_.load(config, true);
   fcitx::safeSaveAsIni(config_, "conf/voiceinput.conf");
-  recognizer_ = std::make_unique<SpeechRecognizer>(config_.endpoint.value());
+  recognizer_ = makeRecognizer(config_);
 }
 
 void VoiceInputModule::registerEventWatchers() {

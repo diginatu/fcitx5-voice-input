@@ -4,21 +4,77 @@
 #include <iostream>
 #include <string>
 
+namespace {
+int failures = 0;
+
+void expectEqual(const std::string &actual, const std::string &expected,
+                 const std::string &label) {
+    if (actual != expected) {
+        std::cerr << "FAIL: " << label << " expected='" << expected
+                  << "' actual='" << actual << "'\n";
+        ++failures;
+    }
+}
+
+void expectBool(bool actual, bool expected, const std::string &label) {
+    if (actual != expected) {
+        std::cerr << "FAIL: " << label << " expected=" << expected
+                  << " actual=" << actual << "\n";
+        ++failures;
+    }
+}
+} // namespace
+
 int main() {
-    assert(trimTranscript("hello\n") == "hello");
-    assert(trimTranscript("hello world\r\n") == "hello world");
-    assert(trimTranscript("hello\r\n\r\n") == "hello");
-    assert(trimTranscript("trailing tabs\t\t") == "trailing tabs");
-    assert(trimTranscript("trailing spaces   ") == "trailing spaces");
+    expectEqual(trimTranscript("hello"), "hello", "no whitespace");
+    expectEqual(trimTranscript("hello\n"), "hello", "trailing newline");
+    expectEqual(trimTranscript("hello \t\r\n"), "hello", "trailing mixed");
+    expectEqual(trimTranscript("  hi"), "  hi", "leading preserved");
+    expectEqual(trimTranscript(""), "", "empty");
+    expectEqual(trimTranscript("   "), "", "all whitespace");
+    expectEqual(trimTranscript("line1\nline2\n"), "line1\nline2",
+                "internal newline kept");
 
-    // Only trailing whitespace is trimmed; leading is preserved.
-    assert(trimTranscript("  spaced  ") == "  spaced");
+    // Whisper ASR webservice backend: legacy field name, no model/auth.
+    {
+        RecognizerConfig cfg;
+        cfg.endpoint = "http://localhost:9000/asr";
+        cfg.openAiCompatible = false;
+        cfg.model = "ignored";
+        cfg.apiKey = "ignored";
+        RequestSpec spec = buildRequestSpec(cfg);
+        expectEqual(spec.fileFieldName, "audio_file", "whisper field name");
+        expectBool(spec.sendModel, false, "whisper no model");
+        expectBool(spec.sendResponseFormatText, false, "whisper no response_format");
+        expectBool(spec.sendAuthHeader, false, "whisper no auth");
+    }
 
-    // Edge cases.
-    assert(trimTranscript("") == "");
-    assert(trimTranscript("\n\r\t ") == "");
-    assert(trimTranscript("no-trim") == "no-trim");
+    // OpenAI-compatible backend without an API key.
+    {
+        RecognizerConfig cfg;
+        cfg.endpoint = "http://localhost:8000/v1/audio/transcriptions";
+        cfg.openAiCompatible = true;
+        cfg.model = "Systran/faster-whisper-small";
+        cfg.apiKey = "";
+        RequestSpec spec = buildRequestSpec(cfg);
+        expectEqual(spec.fileFieldName, "file", "openai field name");
+        expectBool(spec.sendModel, true, "openai sends model");
+        expectBool(spec.sendResponseFormatText, true, "openai response_format=text");
+        expectBool(spec.sendAuthHeader, false, "openai no auth without key");
+    }
 
-    std::cout << "speech_recognizer_test: OK" << std::endl;
-    return 0;
+    // OpenAI-compatible backend with an API key set.
+    {
+        RecognizerConfig cfg;
+        cfg.openAiCompatible = true;
+        cfg.model = "whisper-1";
+        cfg.apiKey = "sk-test";
+        RequestSpec spec = buildRequestSpec(cfg);
+        expectBool(spec.sendAuthHeader, true, "openai auth with key");
+    }
+
+    if (failures == 0) {
+        std::cout << "All speech_recognizer tests passed\n";
+    }
+    return failures == 0 ? 0 : 1;
 }

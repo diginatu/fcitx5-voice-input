@@ -58,7 +58,9 @@ sudo apt install build-essential cmake ninja-build gettext pkg-config \
 
 ### Speech Recognition Server
 
-This module expects a [whisper-asr-webservice](https://github.com/ahmetoner/whisper-asr-webservice)-compatible HTTP server. By default it targets `http://localhost:9000/asr?output=txt&encode=false`:
+This module supports two HTTP speech-to-text backends, selected via the **API format** option (see **Configuration**):
+
+**1. Whisper ASR webservice (default).** A [whisper-asr-webservice](https://github.com/ahmetoner/whisper-asr-webservice)-compatible server. By default it targets `http://localhost:9000/asr?output=txt&encode=false`:
 
 - `output=txt` makes the server return the transcript as a plain text body (no JSON parsing required).
 - `encode=false` skips the server-side ffmpeg re-encode step, because the addon already sends a 16 kHz mono S16LE WAV that Whisper accepts natively.
@@ -69,6 +71,8 @@ A quick way to bring one up locally is the upstream Docker image:
 docker run -d -p 9000:9000 --name whisper \
   onerahmet/openai-whisper-asr-webservice:latest
 ```
+
+**2. OpenAI-compatible (speaches / OpenAI).** Any server implementing the OpenAI `POST /v1/audio/transcriptions` API, such as [speaches](https://github.com/speaches-ai/speaches). Set **API format** to *OpenAI-compatible*, point **Endpoint** at e.g. `http://localhost:8000/v1/audio/transcriptions`, and set **Model** to a model the server has loaded (e.g. `Systran/faster-whisper-small`). If the server requires authentication, set **API key** (sent as `Authorization: Bearer <key>`). The addon sends the audio as multipart field `file`, includes the `model` field, and requests `response_format=text`.
 
 The endpoint URL is currently hardcoded in `VoiceInputModule`'s constructor (`src/voiceinput-module.cpp`); making it user-configurable is tracked together with the hardcoded F12 hotkey.
 
@@ -164,13 +168,16 @@ The libcurl HTTP path and the Fcitx5 addon integration are not unit-tested; veri
 
 ## Configuration
 
-The addon exposes three user-configurable options, defined in `src/voiceinput_config.h` via the `FCITX_CONFIGURATION` macro. Edit them from `fcitx5-configtool` → Addons → Voice Input → Configure (or the Plasma input-method module). Changes are persisted to `~/.config/fcitx5/conf/voiceinput.conf`.
+The addon exposes the following user-configurable options, defined in `src/voiceinput_config.h` via the `FCITX_CONFIGURATION` macro. Edit them from `fcitx5-configtool` → Addons → Voice Input → Configure (or the Plasma input-method module). Changes are persisted to `~/.config/fcitx5/conf/voiceinput.conf`.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `ActivationKey` | `F12` | Key (or list of keys) that toggles recording on and off. |
 | `CancelKey` | `Escape` | Key (or list of keys) that aborts an active recording. Has no effect once the WAV has been sent to the STT server. |
-| `Endpoint` | `http://localhost:9000/asr?output=txt&encode=false` | Whisper-compatible HTTP endpoint that receives the WAV as multipart/form-data (field `audio_file`). Changing it rebuilds the in-process recognizer on save; in-flight requests keep using their original URL. |
+| `ApiFormat` | `Whisper ASR webservice` | Which backend the endpoint speaks: `Whisper ASR webservice` or `OpenAI-compatible` (speaches/OpenAI). Determines the multipart field name and extra request fields. |
+| `Endpoint` | `http://localhost:9000/asr?output=txt&encode=false` | HTTP endpoint that receives the WAV as multipart/form-data. For the Whisper backend the audio field is `audio_file`; for the OpenAI-compatible backend it is `file`. Changing it rebuilds the in-process recognizer on save; in-flight requests keep using their original config. |
+| `Model` | `Systran/faster-whisper-small` | Model name sent to OpenAI-compatible backends (ignored by the Whisper backend). |
+| `ApiKey` | (empty) | When set, sent as `Authorization: Bearer <key>` to OpenAI-compatible backends. Leave empty if the server needs no auth. |
 
 The addon descriptor itself (`src/voiceinput.conf.in` → installed to `addon/`) marks the addon as `Configurable=True`. The configuration schema is exposed at runtime via `VoiceInputModule::getConfig()`, so no separate `configdesc/` file is needed.
 

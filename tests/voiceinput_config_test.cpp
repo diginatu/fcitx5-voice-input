@@ -30,6 +30,11 @@ int main() {
     config.load(raw, true);
     assert(config.endpoint.value() == "http://example.com/asr");
 
+    // Defaults: API format whisper, OpenAI model + empty key.
+    assert(config.apiFormat.value() == ApiFormat::WhisperAsrWebservice);
+    assert(config.model.value() == "Systran/faster-whisper-small");
+    assert(config.apiKey.value().empty());
+
     std::cout << "voiceinput_config_test: OK" << std::endl;
     return 0;
 }

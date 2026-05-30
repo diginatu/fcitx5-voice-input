@@ -3,93 +3,87 @@
 #include <curl/curl.h>
 
 #include <mutex>
-#include <string>
 #include <thread>
-#include <utility>
-#include <vector>
 
 namespace {
+std::once_flag curlInitFlag;
 
-size_t writeBodyCb(char *data, size_t size, size_t nmemb, void *userp) {
-    const size_t total = size * nmemb;
-    auto *body = static_cast<std::string *>(userp);
-    body->append(data, total);
-    return total;
+size_t writeCallback(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    auto *response = static_cast<std::string *>(userdata);
+    response->append(ptr, size * nmemb);
+    return size * nmemb;
 }
-
-void ensureCurlGlobalInit() {
-    static std::once_flag flag;
-    std::call_once(flag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-
 } // namespace
 
-SpeechRecognizer::SpeechRecognizer(std::string endpoint)
-    : endpoint_(std::move(endpoint)) {
-    ensureCurlGlobalInit();
-}
-
-SpeechRecognizer::~SpeechRecognizer() = default;
+SpeechRecognizer::SpeechRecognizer(RecognizerConfig config)
+    : config_(std::move(config)) {}
 
 void SpeechRecognizer::transcribe(std::vector<uint8_t> wav, ResultCB onResult,
                                   ErrorCB onError) {
-    if (wav.empty()) {
-        if (onError) {
-            onError("empty recording");
-        }
-        return;
-    }
-    std::thread(&SpeechRecognizer::runRequest, endpoint_, std::move(wav),
-                std::move(onResult), std::move(onError))
-        .detach();
-}
+    std::call_once(curlInitFlag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
 
-void SpeechRecognizer::runRequest(std::string url, std::vector<uint8_t> wav,
-                                  ResultCB onResult, ErrorCB onError) {
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        if (onError) {
+    RequestSpec spec = buildRequestSpec(config_);
+
+    std::thread([wav = std::move(wav), onResult = std::move(onResult),
+                 onError = std::move(onError), url = config_.endpoint,
+                 spec = std::move(spec), model = config_.model,
+                 apiKey = config_.apiKey]() mutable {
+        CURL *curl = curl_easy_init();
+        if (!curl) {
             onError("curl_easy_init failed");
+            return;
         }
-        return;
-    }
 
-    std::string body;
-    curl_mime *mime = curl_mime_init(curl);
-    curl_mimepart *part = curl_mime_addpart(mime);
-    curl_mime_name(part, "audio_file");
-    curl_mime_filename(part, "audio.wav");
-    curl_mime_type(part, "audio/wav");
-    curl_mime_data(part, reinterpret_cast<const char *>(wav.data()),
-                   wav.size());
+        std::string response;
+        curl_mime *mime = curl_mime_init(curl);
+        curl_mimepart *part = curl_mime_addpart(mime);
+        curl_mime_name(part, spec.fileFieldName.c_str());
+        curl_mime_filename(part, "audio.wav");
+        curl_mime_data(part, reinterpret_cast<const char *>(wav.data()),
+                       wav.size());
+        curl_mime_type(part, "audio/wav");
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeBodyCb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
-
-    const CURLcode rc = curl_easy_perform(curl);
-    long httpStatus = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpStatus);
-
-    curl_mime_free(mime);
-    curl_easy_cleanup(curl);
-
-    if (rc != CURLE_OK) {
-        if (onError) {
-            onError(std::string("curl: ") + curl_easy_strerror(rc));
+        if (spec.sendModel) {
+            curl_mimepart *modelPart = curl_mime_addpart(mime);
+            curl_mime_name(modelPart, "model");
+            curl_mime_data(modelPart, model.c_str(), CURL_ZERO_TERMINATED);
         }
-        return;
-    }
-    if (httpStatus < 200 || httpStatus >= 300) {
-        if (onError) {
-            onError("HTTP " + std::to_string(httpStatus) + ": " + body);
+        if (spec.sendResponseFormatText) {
+            curl_mimepart *fmtPart = curl_mime_addpart(mime);
+            curl_mime_name(fmtPart, "response_format");
+            curl_mime_data(fmtPart, "text", CURL_ZERO_TERMINATED);
         }
-        return;
-    }
-    if (onResult) {
-        onResult(trimTranscript(std::move(body)));
-    }
+
+        struct curl_slist *headers = nullptr;
+        if (spec.sendAuthHeader) {
+            std::string auth = "Authorization: Bearer " + apiKey;
+            headers = curl_slist_append(headers, auth.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
+
+        CURLcode res = curl_easy_perform(curl);
+
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+        if (res != CURLE_OK) {
+            onError(curl_easy_strerror(res));
+        } else if (httpCode < 200 || httpCode >= 300) {
+            onError("HTTP " + std::to_string(httpCode));
+        } else {
+            onResult(trimTranscript(response));
+        }
+
+        curl_mime_free(mime);
+        if (headers) {
+            curl_slist_free_all(headers);
+        }
+        curl_easy_cleanup(curl);
+    }).detach();
 }
