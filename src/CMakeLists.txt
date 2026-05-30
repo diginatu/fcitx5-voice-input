@@ -1,8 +1,9 @@
-add_fcitx5_addon(voiceinput
+add_library(voiceinput MODULE
   voiceinput-module.cpp
   speech_recognizer.cpp
   audio_capture.cpp
 )
+set_target_properties(voiceinput PROPERTIES FCITX_ADDON TRUE)
 
 target_link_libraries(voiceinput PRIVATE Fcitx5::Core)
 
