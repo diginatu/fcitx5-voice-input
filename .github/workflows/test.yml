@@ -21,7 +21,9 @@ jobs:
             ninja-build \
             pkg-config \
             gettext \
-            libfcitx5-dev \
+            libfcitx5core-dev \
+            libfcitx5utils-dev \
+            libfcitx5config-dev \
             libpulse-dev \
             libcurl4-openssl-dev
 

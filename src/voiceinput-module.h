@@ -5,6 +5,7 @@
 #include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/instance.h>
+#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/handlertable.h>
 #include <cstdint>
 #include <memory>
@@ -42,6 +43,7 @@ private:
   std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
       eventHandlers_;
 
+  fcitx::EventDispatcher dispatcher_;
   bool active_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;

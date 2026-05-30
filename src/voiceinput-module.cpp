@@ -11,7 +11,6 @@
 #include <fcitx/text.h>
 #include <fcitx/userinterface.h>
 #include <fcitx-utils/event.h>
-#include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
 
@@ -36,6 +35,7 @@ VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
     : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
   reloadConfig();
   recognizer_ = makeRecognizer(config_);
+  dispatcher_.attach(&instance_->eventLoop());
   registerEventWatchers();
 }
 
@@ -100,15 +100,14 @@ void VoiceInputModule::finishRecording() {
   }
   showIndicator("Transcribing…");
   auto wav = std::move(lastRecording_);
-  auto *dispatcher = &instance_->eventDispatcher();
   recognizer_->transcribe(
       std::move(wav),
-      [this, dispatcher](std::string text) {
-        dispatcher->schedule(
+      [this](std::string text) {
+        dispatcher_.schedule(
             [this, text = std::move(text)]() { onSpeechResult(text); });
       },
-      [this, dispatcher](std::string err) {
-        dispatcher->schedule([this, err = std::move(err)]() {
+      [this](std::string err) {
+        dispatcher_.schedule([this, err = std::move(err)]() {
           FCITX_WARN() << "voiceinput: STT error: " << err;
           showIndicator("Error: " + err);
           struct timespec ts;
@@ -169,4 +168,8 @@ class VoiceInputModuleFactory : public AddonFactory {
 };
 } // namespace fcitx
 
+#ifdef FCITX_ADDON_FACTORY_V2
 FCITX_ADDON_FACTORY_V2(voiceinput, fcitx::VoiceInputModuleFactory)
+#else
+FCITX_ADDON_FACTORY(fcitx::VoiceInputModuleFactory)
+#endif
