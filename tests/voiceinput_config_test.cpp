@@ -36,6 +36,10 @@ int main() {
     assert(config.apiKey.value().empty());
     assert(config.prompt.value().empty());
 
+    // Defaults: history enabled, size 50.
+    assert(config.historyEnabled.value() == true);
+    assert(config.historySize.value() == 50);
+
     std::cout << "voiceinput_config_test: OK" << std::endl;
     return 0;
 }

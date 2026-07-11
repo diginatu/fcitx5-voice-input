@@ -39,4 +39,9 @@ FCITX_CONFIGURATION(
     fcitx::Option<std::string> apiKey{
         this, "ApiKey", "API key (OpenAI-compatible backends)", ""};
     fcitx::Option<std::string> prompt{
-        this, "Prompt", "Prompt (OpenAI-compatible backends)", ""};);
+        this, "Prompt", "Prompt (OpenAI-compatible backends)", ""};
+    fcitx::Option<bool> historyEnabled{
+        this, "HistoryEnabled", "Save history for recovery", true};
+    fcitx::Option<int, fcitx::IntConstrain> historySize{
+        this, "HistorySize", "Max history entries", 50,
+        fcitx::IntConstrain(1)};);
