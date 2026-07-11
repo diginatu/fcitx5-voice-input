@@ -87,13 +87,15 @@ fcitx5-voiceinput/
 │   ├── audio_capture.{h,cpp}      # PulseAudio capture into a WAV buffer
 │   ├── wav_header.h               # 44-byte RIFF/PCM header builder
 │   ├── speech_recognizer.{h,cpp}  # libcurl POST to Whisper-/OpenAI-compatible HTTP STT
+│   ├── history.{h,cpp}            # on-disk history of transcripts + failed recordings
 │   ├── voiceinput_config.h        # FCITX_CONFIGURATION schema (keys, endpoint, format, …)
 │   └── voiceinput.conf{,.in}
 ├── tests/
 │   ├── CMakeLists.txt
 │   ├── wav_header_test.cpp           # CTest target: ctest -R wav_header_test
 │   ├── speech_recognizer_test.cpp    # CTest target: ctest -R speech_recognizer_test
-│   └── voiceinput_config_test.cpp    # CTest target: ctest -R voiceinput_config_test
+│   ├── voiceinput_config_test.cpp    # CTest target: ctest -R voiceinput_config_test
+│   └── history_test.cpp              # CTest target: ctest -R history_test
 ├── data/
 └── ...
 ```
@@ -145,6 +147,21 @@ The addon logs to wherever your Fcitx5 instance logs (e.g. `journalctl --user -u
 - `voiceinput: captured N bytes` — capture finished, request fired. `N` should be roughly `44 + 32000 * seconds_spoken`.
 - `voiceinput: STT error: …` — the server returned non-2xx or libcurl reported a transport error (e.g. connection refused if the STT server isn't running). The same message is shown on-screen as an `Error: …` indicator for a few seconds.
 
+## History and Recovery
+
+To make recovery possible when a transcription is lost, the addon keeps a small on-disk history under `~/.local/share/fcitx5/voiceinput/history/` (respecting `$XDG_DATA_HOME`). It is enabled by default (`HistoryEnabled`).
+
+- **Successful transcripts** are always saved as timestamped `.txt` files (e.g. `20260711-143502.txt`).
+- **Failed recordings** — those whose STT request errored — are saved as timestamped `.wav` files so they can be re-transcribed without re-speaking. Successful recordings' audio is never written to disk; only their transcript text is kept.
+
+At most `HistorySize` entries (default 50) are retained; the oldest are pruned as new ones arrive. At 16 kHz mono, audio is roughly 1.9 MB per minute, so a failed recording occupies memory twice briefly while it is copied for saving.
+
+Three optional hotkeys drive recovery (all unbound by default — assign them in `fcitx5-configtool`):
+
+- **`RetryKey`** re-transcribes the newest failed recording. On success the text is committed, saved as a new transcript, and the `.wav` is deleted.
+- **`RecommitKey`** commits the newest saved transcript into the focused field again — useful when a transcript landed in the wrong window.
+- **`HistoryKey`** opens a candidate-list picker of recent entries (newest first): transcripts show a ~40-character preview, failed recordings show `[failed recording <timestamp>]`. Select with the number keys (or arrows + Enter); selecting a transcript commits it and selecting a failed recording retries it. `Esc` closes the picker.
+
 ## Testing
 
 Unit tests are built alongside the addon and registered with CTest:
@@ -161,6 +178,7 @@ Current coverage:
 - `wav_header_test` — verifies the 44-byte RIFF/PCM header builder (`src/wav_header.h`).
 - `speech_recognizer_test` — verifies the inline `trimTranscript()` helper (trailing-whitespace stripping) and `buildRequestSpec()` (the per-backend request shape: Whisper uses field `audio_file` with no model/auth; OpenAI-compatible uses field `file` with `model` + `response_format=text`, sends a `prompt` part only when a prompt is set, and a `Bearer` auth header only when an API key is set) from `src/speech_recognizer.h`.
 - `voiceinput_config_test` — verifies `VoiceInputConfig` defaults and a `RawConfig` round-trip (`src/voiceinput_config.h`).
+- `history_test` — verifies the `History` component (`src/history.{h,cpp}`): save/read round-trips for transcripts and failed audio, newest-first ordering, pruning beyond `HistorySize`, timestamp-collision suffixing, the `latest*` lookups, and `remove`.
 
 The libcurl HTTP path and the Fcitx5 addon integration are not unit-tested; verify them manually using the steps under **Usage**. When adding new pure-function tests, follow the same mutation-check discipline used elsewhere in the project: briefly break the implementation, confirm the new test fails, then revert.
 
@@ -177,6 +195,11 @@ The addon exposes the following user-configurable options, defined in `src/voice
 | `Model` | `Systran/faster-whisper-small` | Model name sent to OpenAI-compatible backends (ignored by the Whisper backend). |
 | `ApiKey` | (empty) | When set, sent as `Authorization: Bearer <key>` to OpenAI-compatible backends. Leave empty if the server needs no auth. |
 | `Prompt` | (empty) | When set, sent as the `prompt` field to OpenAI-compatible backends to bias transcription (e.g. domain vocabulary, proper nouns). Ignored by the Whisper backend. |
+| `HistoryEnabled` | `true` | Save history for recovery (see **History and Recovery** below). When off, nothing is written and the recovery hotkeys report "No history". |
+| `HistorySize` | `50` | Maximum number of history entries kept. Older entries are pruned when the count is exceeded. |
+| `RetryKey` | (unbound) | Re-transcribes the most recent failed recording through the current recognizer config. On success the transcript is committed and the saved audio is removed. |
+| `RecommitKey` | (unbound) | Commits the most recent saved transcript into the focused input context again. |
+| `HistoryKey` | (unbound) | Opens a candidate-list picker of recent history entries; select a transcript to commit it or a failed recording to retry it. `Esc` closes it. |
 
 The addon descriptor itself (`src/voiceinput.conf.in` → installed to `addon/`) marks the addon as `Configurable=True`. The configuration schema is exposed at runtime via `VoiceInputModule::getConfig()`, so no separate `configdesc/` file is needed.
 
