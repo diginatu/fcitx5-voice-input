@@ -5,7 +5,9 @@
 #include <fcitx-config/iniparser.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h> // For AddonManager
+#include <fcitx/candidatelist.h>
 #include <fcitx/event.h>       // For fcitx::Event
+#include <fcitx/globalconfig.h>
 #include <fcitx/inputcontextmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
@@ -19,6 +21,7 @@
 #include <algorithm>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <utility>
 
 namespace {
@@ -47,6 +50,22 @@ std::unique_ptr<History> makeHistory(const VoiceInputConfig &config) {
   auto size = static_cast<std::size_t>(std::max(1, config.historySize.value()));
   return std::make_unique<History>(std::move(dir), size);
 }
+
+// A history-picker candidate that runs an arbitrary action when selected.
+class HistoryCandidateWord : public fcitx::CandidateWord {
+public:
+  HistoryCandidateWord(const std::string &label, std::function<void()> action)
+      : fcitx::CandidateWord(fcitx::Text(label)), action_(std::move(action)) {}
+
+  void select(fcitx::InputContext *) const override {
+    if (action_) {
+      action_();
+    }
+  }
+
+private:
+  std::function<void()> action_;
+};
 } // namespace
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
@@ -76,6 +95,76 @@ void VoiceInputModule::registerEventWatchers() {
       fcitx::EventType::InputContextKeyEvent,
       fcitx::EventWatcherPhase::PreInputMethod, [this](fcitx::Event &event) {
         auto &ke = static_cast<fcitx::KeyEvent &>(event);
+        // While the history picker is open, drive the candidate list.
+        if (pickerOpen_) {
+          auto *ic = ke.inputContext();
+          auto candidateList = ic->inputPanel().candidateList();
+          if (!candidateList) {
+            pickerOpen_ = false;
+          } else if (!ke.isRelease()) {
+            int idx = ke.key().digitSelection();
+            if (idx >= 0 && idx < candidateList->size()) {
+              ke.filterAndAccept();
+              candidateList->candidate(idx).select(ic);
+              return;
+            }
+            if (ke.key().check(FcitxKey_Escape)) {
+              ke.filterAndAccept();
+              closePicker();
+              return;
+            }
+            if (ke.key().check(FcitxKey_Return) ||
+                ke.key().check(FcitxKey_KP_Enter)) {
+              ke.filterAndAccept();
+              if (candidateList->cursorIndex() >= 0) {
+                candidateList->candidate(candidateList->cursorIndex())
+                    .select(ic);
+              }
+              return;
+            }
+            if (ke.key().checkKeyList(
+                    instance_->globalConfig().defaultPrevCandidate())) {
+              ke.filterAndAccept();
+              candidateList->toCursorMovable()->prevCandidate();
+              ic->updateUserInterface(
+                  fcitx::UserInterfaceComponent::InputPanel);
+              return;
+            }
+            if (ke.key().checkKeyList(
+                    instance_->globalConfig().defaultNextCandidate())) {
+              ke.filterAndAccept();
+              candidateList->toCursorMovable()->nextCandidate();
+              ic->updateUserInterface(
+                  fcitx::UserInterfaceComponent::InputPanel);
+              return;
+            }
+            if (ke.key().checkKeyList(
+                    instance_->globalConfig().defaultPrevPage())) {
+              auto *pageable = candidateList->toPageable();
+              if (pageable->hasPrev()) {
+                ke.filterAndAccept();
+                pageable->prev();
+                ic->updateUserInterface(
+                    fcitx::UserInterfaceComponent::InputPanel);
+                return;
+              }
+            }
+            if (ke.key().checkKeyList(
+                    instance_->globalConfig().defaultNextPage())) {
+              auto *pageable = candidateList->toPageable();
+              if (pageable->hasNext()) {
+                ke.filterAndAccept();
+                pageable->next();
+                ic->updateUserInterface(
+                    fcitx::UserInterfaceComponent::InputPanel);
+                return;
+              }
+            }
+            // Eat any other key so the picker stays modal.
+            ke.filterAndAccept();
+            return;
+          }
+        }
         if (!ke.isRelease() &&
             ke.key().checkKeyList(config_.activationKey.value())) {
           if (!active_) {
@@ -94,6 +183,10 @@ void VoiceInputModule::registerEventWatchers() {
                    ke.key().checkKeyList(config_.recommitKey.value())) {
           ke.filterAndAccept();
           recommitLast();
+        } else if (!active_ && !ke.isRelease() &&
+                   ke.key().checkKeyList(config_.historyKey.value())) {
+          ke.filterAndAccept();
+          openHistoryPicker();
         } else if (active_) {
           if (!ke.isRelease() &&
               ke.key().checkKeyList(config_.cancelKey.value())) {
@@ -222,6 +315,56 @@ void VoiceInputModule::retryEntry(const std::filesystem::path &wavPath) {
           showTransientError("Error: " + err);
         });
       });
+}
+
+void VoiceInputModule::openHistoryPicker() {
+  if (!history_) {
+    return;
+  }
+  auto entries = history_->listEntries();
+  if (entries.empty()) {
+    showTransientError("No history");
+    return;
+  }
+  auto *ic = instance_->inputContextManager().mostRecentInputContext();
+  if (!ic) {
+    return;
+  }
+  auto list = std::make_unique<fcitx::CommonCandidateList>();
+  list->setPageSize(10);
+  for (const auto &e : entries) {
+    if (e.kind == HistoryEntryKind::Transcript) {
+      std::string text = readFile(e.path);
+      std::string label = text.substr(0, 40);
+      list->append<HistoryCandidateWord>(label, [this, text]() {
+        closePicker();
+        if (auto *ic =
+                instance_->inputContextManager().mostRecentInputContext()) {
+          ic->commitString(text);
+        }
+      });
+    } else {
+      std::string label =
+          "[failed recording " + e.path.stem().string() + "]";
+      std::filesystem::path path = e.path;
+      list->append<HistoryCandidateWord>(label, [this, path]() {
+        closePicker();
+        retryEntry(path);
+      });
+    }
+  }
+  if (!list->empty()) {
+    list->setGlobalCursorIndex(0);
+  }
+  ic->inputPanel().reset();
+  ic->inputPanel().setCandidateList(std::move(list));
+  ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+  pickerOpen_ = true;
+}
+
+void VoiceInputModule::closePicker() {
+  pickerOpen_ = false;
+  hideIndicator();
 }
 
 void VoiceInputModule::showIndicator(const std::string &text) {

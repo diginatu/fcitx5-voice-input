@@ -44,6 +44,8 @@ private:
   void retryLast();
   void retryEntry(const std::filesystem::path &wavPath);
   void recommitLast();
+  void openHistoryPicker();
+  void closePicker();
 
   VoiceInputConfig config_;
   fcitx::Instance *instance_;
@@ -52,6 +54,7 @@ private:
 
   fcitx::EventDispatcher dispatcher_;
   bool active_ = false;
+  bool pickerOpen_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;
   std::unique_ptr<History> history_;
