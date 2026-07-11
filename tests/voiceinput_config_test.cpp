@@ -40,6 +40,10 @@ int main() {
     assert(config.historyEnabled.value() == true);
     assert(config.historySize.value() == 50);
 
+    // Defaults: retry/recommit keys unbound.
+    assert(config.retryKey.value().empty());
+    assert(config.recommitKey.value().empty());
+
     std::cout << "voiceinput_config_test: OK" << std::endl;
     return 0;
 }

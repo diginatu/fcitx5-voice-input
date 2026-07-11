@@ -44,4 +44,16 @@ FCITX_CONFIGURATION(
         this, "HistoryEnabled", "Save history for recovery", true};
     fcitx::Option<int, fcitx::IntConstrain> historySize{
         this, "HistorySize", "Max history entries", 50,
-        fcitx::IntConstrain(1)};);
+        fcitx::IntConstrain(1)};
+    fcitx::KeyListOption retryKey{
+        this,
+        "RetryKey",
+        "Retry last failed recording",
+        {},
+        fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierLess})};
+    fcitx::KeyListOption recommitKey{
+        this,
+        "RecommitKey",
+        "Re-commit last transcript",
+        {},
+        fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierLess})};);
