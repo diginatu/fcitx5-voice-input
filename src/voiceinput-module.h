@@ -36,6 +36,7 @@ private:
   void hideIndicator();
   void startListening();
   void finishRecording();
+  void onCaptureComplete(std::vector<uint8_t> wav);
   void cancel();
 
   VoiceInputConfig config_;
@@ -47,6 +48,5 @@ private:
   bool active_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;
-  std::vector<uint8_t> lastRecording_;
   std::unique_ptr<fcitx::EventSourceTime> errorTimer_;
 };

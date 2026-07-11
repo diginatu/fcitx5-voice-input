@@ -1,4 +1,5 @@
 #include "audio_capture.h"
+#include "capture_delivery.h"
 #include "wav_header.h"
 
 #include <fcitx-utils/log.h>
@@ -7,32 +8,50 @@
 #include <pulse/simple.h>
 
 #include <array>
-#include <cstring>
+#include <thread>
+#include <utility>
 
 AudioCapture::AudioCapture() = default;
 
 AudioCapture::~AudioCapture() {
-    if (running_.load()) {
-        running_.store(false);
-        if (worker_.joinable()) {
-            worker_.join();
-        }
+    // Signal any in-flight worker to stop and discard its result. We
+    // deliberately do NOT join: a worker parked in a blocking PulseAudio call
+    // must never freeze teardown. The worker is self-contained and keeps the
+    // session alive via its own shared_ptr, so it is safe to outlive us.
+    if (session_) {
+        session_->resolve(nullptr);
     }
 }
 
 bool AudioCapture::start() {
-    if (running_.exchange(true)) {
+    if (session_) {
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(pcmMutex_);
-        pcm_.clear();
-    }
-    worker_ = std::thread(&AudioCapture::captureLoop, this);
+    session_ = std::make_shared<CaptureDelivery>();
+    std::thread(&AudioCapture::captureLoop, session_).detach();
     return true;
 }
 
-void AudioCapture::captureLoop() {
+void AudioCapture::finish(ResultCB onResult) {
+    if (!session_) {
+        if (onResult) {
+            onResult({});
+        }
+        return;
+    }
+    session_->resolve(std::move(onResult));
+    session_.reset();
+}
+
+void AudioCapture::cancel() {
+    if (!session_) {
+        return;
+    }
+    session_->resolve(nullptr);
+    session_.reset();
+}
+
+void AudioCapture::captureLoop(std::shared_ptr<CaptureDelivery> session) {
     pa_sample_spec spec{};
     spec.format = PA_SAMPLE_S16LE;
     spec.rate = kSampleRate;
@@ -42,9 +61,9 @@ void AudioCapture::captureLoop() {
     constexpr uint32_t kChunkBytes =
         static_cast<uint32_t>(kChunkSamples * sizeof(int16_t));
 
-    // Ask the server for fragments matching our read size so stop() can
-    // interrupt within one chunk. Without this, the default fragsize can be
-    // hundreds of ms or more.
+    // Ask the server for fragments matching our read size so a stop request is
+    // observed within roughly one chunk. Without this, the default fragsize can
+    // be hundreds of ms or more.
     pa_buffer_attr attr{};
     attr.maxlength = static_cast<uint32_t>(-1);
     attr.tlength = static_cast<uint32_t>(-1);
@@ -58,53 +77,38 @@ void AudioCapture::captureLoop() {
                                       &spec, nullptr, &attr, &err);
     if (!stream) {
         FCITX_WARN() << "voiceinput: pa_simple_new failed: " << pa_strerror(err);
-        running_.store(false);
+        session->setResult({});
         return;
     }
 
+    std::vector<int16_t> pcm;
     std::array<int16_t, kChunkSamples> chunk{};
 
-    while (running_.load()) {
+    while (!session->stopRequested()) {
         if (pa_simple_read(stream, chunk.data(),
                            chunk.size() * sizeof(int16_t), &err) < 0) {
             FCITX_WARN() << "voiceinput: pa_simple_read failed: "
                          << pa_strerror(err);
             break;
         }
-        std::lock_guard<std::mutex> lk(pcmMutex_);
-        pcm_.insert(pcm_.end(), chunk.begin(), chunk.end());
+        pcm.insert(pcm.end(), chunk.begin(), chunk.end());
     }
 
     pa_simple_free(stream);
-}
 
-std::vector<uint8_t> AudioCapture::stop() {
-    if (running_.exchange(false)) {
-        if (worker_.joinable()) {
-            worker_.join();
-        }
-    } else if (worker_.joinable()) {
-        worker_.join();
+    if (pcm.empty()) {
+        session->setResult({});
+        return;
     }
 
-    std::vector<int16_t> samples;
-    {
-        std::lock_guard<std::mutex> lk(pcmMutex_);
-        samples.swap(pcm_);
-    }
-    if (samples.empty()) {
-        return {};
-    }
-
-    const uint32_t pcmBytes =
-        static_cast<uint32_t>(samples.size() * sizeof(int16_t));
-    const auto header = buildWavHeader(pcmBytes, kSampleRate, kChannels,
-                                       kBitsPerSample);
+    const uint32_t pcmBytes = static_cast<uint32_t>(pcm.size() * sizeof(int16_t));
+    const auto header =
+        buildWavHeader(pcmBytes, kSampleRate, kChannels, kBitsPerSample);
 
     std::vector<uint8_t> wav;
     wav.reserve(header.size() + pcmBytes);
     wav.insert(wav.end(), header.begin(), header.end());
-    const auto *pcmBytesPtr = reinterpret_cast<const uint8_t *>(samples.data());
+    const auto *pcmBytesPtr = reinterpret_cast<const uint8_t *>(pcm.data());
     wav.insert(wav.end(), pcmBytesPtr, pcmBytesPtr + pcmBytes);
-    return wav;
+    session->setResult(std::move(wav));
 }

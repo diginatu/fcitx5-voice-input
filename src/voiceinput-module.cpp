@@ -91,15 +91,23 @@ void VoiceInputModule::startListening() {
 }
 
 void VoiceInputModule::finishRecording() {
-  lastRecording_ = audioCapture_->stop();
-  FCITX_INFO() << "voiceinput: captured " << lastRecording_.size() << " bytes";
   active_ = false;
-  if (lastRecording_.empty()) {
+  showIndicator("Transcribing…");
+  // Non-blocking: the worker delivers the WAV later, on its own thread. Hop back
+  // to the Fcitx main thread before touching any module/input-context state.
+  audioCapture_->finish([this](std::vector<uint8_t> wav) {
+    dispatcher_.schedule([this, wav = std::move(wav)]() mutable {
+      onCaptureComplete(std::move(wav));
+    });
+  });
+}
+
+void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav) {
+  FCITX_INFO() << "voiceinput: captured " << wav.size() << " bytes";
+  if (wav.empty()) {
     hideIndicator();
     return;
   }
-  showIndicator("Transcribing…");
-  auto wav = std::move(lastRecording_);
   recognizer_->transcribe(
       std::move(wav),
       [this](std::string text) {
@@ -134,8 +142,8 @@ void VoiceInputModule::onSpeechResult(const std::string &text) {
 }
 
 void VoiceInputModule::cancel() {
-  // Drop the buffer; user cancelled.
-  (void)audioCapture_->stop();
+  // Drop the buffer; user cancelled. Non-blocking, like finishRecording().
+  audioCapture_->cancel();
   hideIndicator();
   active_ = false;
 }
