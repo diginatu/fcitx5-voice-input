@@ -1,4 +1,5 @@
 #pragma once
+#include "history.h"
 #include "voiceinput_config.h"
 #include <fcitx-config/rawconfig.h>
 #include <fcitx/addoninstance.h>
@@ -48,5 +49,6 @@ private:
   bool active_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;
+  std::unique_ptr<History> history_;
   std::unique_ptr<fcitx::EventSourceTime> errorTimer_;
 };

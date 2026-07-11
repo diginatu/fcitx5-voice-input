@@ -2,6 +2,7 @@ add_library(voiceinput MODULE
   voiceinput-module.cpp
   speech_recognizer.cpp
   audio_capture.cpp
+  history.cpp
 )
 set_target_properties(voiceinput PROPERTIES FCITX_ADDON TRUE)
 

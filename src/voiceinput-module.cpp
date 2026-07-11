@@ -1,5 +1,6 @@
 #include "voiceinput-module.h"
 #include "audio_capture.h"
+#include "history.h"
 #include "speech_recognizer.h"
 #include <fcitx-config/iniparser.h>
 #include <fcitx/addonfactory.h>
@@ -13,8 +14,11 @@
 #include <fcitx-utils/event.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
+#include <fcitx-utils/standardpaths.h>
 
+#include <algorithm>
 #include <ctime>
+#include <filesystem>
 #include <utility>
 
 namespace {
@@ -29,12 +33,27 @@ std::unique_ptr<SpeechRecognizer> makeRecognizer(const VoiceInputConfig &config)
   rc.prompt = config.prompt.value();
   return std::make_unique<SpeechRecognizer>(std::move(rc));
 }
+
+// Build the History from config: resolves the data dir under the Fcitx
+// standard path so $XDG_DATA_HOME is respected. Returns null when disabled.
+std::unique_ptr<History> makeHistory(const VoiceInputConfig &config) {
+  if (!config.historyEnabled.value()) {
+    return nullptr;
+  }
+  std::filesystem::path dir =
+      fcitx::StandardPaths::global().userDirectory(
+          fcitx::StandardPathsType::Data);
+  dir /= "fcitx5/voiceinput/history";
+  auto size = static_cast<std::size_t>(std::max(1, config.historySize.value()));
+  return std::make_unique<History>(std::move(dir), size);
+}
 } // namespace
 
 VoiceInputModule::VoiceInputModule(fcitx::Instance *instance)
     : instance_(instance), audioCapture_(std::make_unique<AudioCapture>()) {
   reloadConfig();
   recognizer_ = makeRecognizer(config_);
+  history_ = makeHistory(config_);
   dispatcher_.attach(&instance_->eventLoop());
   registerEventWatchers();
 }
@@ -49,6 +68,7 @@ void VoiceInputModule::setConfig(const fcitx::RawConfig &config) {
   config_.load(config, true);
   fcitx::safeSaveAsIni(config_, "conf/voiceinput.conf");
   recognizer_ = makeRecognizer(config_);
+  history_ = makeHistory(config_);
 }
 
 void VoiceInputModule::registerEventWatchers() {
@@ -109,13 +129,18 @@ void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav) {
     return;
   }
   recognizer_->transcribe(
-      std::move(wav),
+      wav, // pass by copy; keep our own for the error path below
       [this](std::string text) {
         dispatcher_.schedule(
             [this, text = std::move(text)]() { onSpeechResult(text); });
       },
-      [this](std::string err) {
-        dispatcher_.schedule([this, err = std::move(err)]() {
+      [this, wav](std::string err) {
+        dispatcher_.schedule([this, err = std::move(err), wav]() {
+          if (history_) {
+            if (!history_->saveFailedAudio(wav)) {
+              FCITX_WARN() << "voiceinput: failed to save audio to history";
+            }
+          }
           FCITX_WARN() << "voiceinput: STT error: " << err;
           showIndicator("Error: " + err);
           struct timespec ts;
@@ -136,6 +161,11 @@ void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav) {
 void VoiceInputModule::onSpeechResult(const std::string &text) {
   if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
     ic->commitString(text);
+  }
+  if (history_) {
+    if (!history_->saveTranscript(text)) {
+      FCITX_WARN() << "voiceinput: failed to save transcript to history";
+    }
   }
   hideIndicator();
   active_ = false;
