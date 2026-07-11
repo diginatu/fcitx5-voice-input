@@ -44,6 +44,9 @@ int main() {
     assert(config.retryKey.value().empty());
     assert(config.recommitKey.value().empty());
 
+    // Default: history picker key unbound.
+    assert(config.historyKey.value().empty());
+
     std::cout << "voiceinput_config_test: OK" << std::endl;
     return 0;
 }

@@ -56,4 +56,10 @@ FCITX_CONFIGURATION(
         "RecommitKey",
         "Re-commit last transcript",
         {},
+        fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierLess})};
+    fcitx::KeyListOption historyKey{
+        this,
+        "HistoryKey",
+        "Open history picker",
+        {},
         fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierLess})};);
