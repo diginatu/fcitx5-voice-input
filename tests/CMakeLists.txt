@@ -14,3 +14,7 @@ add_test(NAME voiceinput_config_test COMMAND voiceinput_config_test)
 add_executable(capture_delivery_test capture_delivery_test.cpp)
 target_include_directories(capture_delivery_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME capture_delivery_test COMMAND capture_delivery_test)
+
+add_executable(history_test history_test.cpp ${CMAKE_SOURCE_DIR}/src/history.cpp)
+target_include_directories(history_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME history_test COMMAND history_test)
