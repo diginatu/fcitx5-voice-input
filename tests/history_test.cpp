@@ -61,6 +61,73 @@ int main() {
         assert(std::vector<uint8_t>(got.begin(), got.end()) == wav);
     }
 
+    // Newest-first ordering across kinds.
+    {
+        fs::path dir = makeTempDir();
+        History h(dir, 50, FakeClock{});
+        h.saveTranscript("first");            // stamp ...000
+        h.saveFailedAudio({1});               // stamp ...001
+        h.saveTranscript("third");            // stamp ...002
+        auto entries = h.listEntries();
+        assert(entries.size() == 3);
+        assert(readFile(entries[0].path) == "third");
+        assert(entries[1].kind == HistoryEntryKind::FailedAudio);
+        assert(readFile(entries[2].path) == "first");
+    }
+
+    // Prune keeps only the newest maxEntries.
+    {
+        fs::path dir = makeTempDir();
+        History h(dir, 2, FakeClock{});
+        h.saveTranscript("a"); // ...000
+        h.saveTranscript("b"); // ...001
+        h.saveTranscript("c"); // ...002
+        auto entries = h.listEntries();
+        assert(entries.size() == 2);
+        assert(readFile(entries[0].path) == "c");
+        assert(readFile(entries[1].path) == "b");
+    }
+
+    // Same-stamp collision gets a numeric suffix (both survive).
+    {
+        fs::path dir = makeTempDir();
+        // A clock that always returns the same stamp.
+        History h(dir, 50, []() { return std::string("20260101-120000"); });
+        assert(h.saveTranscript("one"));
+        assert(h.saveTranscript("two"));
+        auto entries = h.listEntries();
+        assert(entries.size() == 2);
+    }
+
+    // latestTranscript / latestFailedAudio pick the newest of each kind.
+    {
+        fs::path dir = makeTempDir();
+        History h(dir, 50, FakeClock{});
+        h.saveFailedAudio({9}); // ...000
+        h.saveTranscript("t1"); // ...001
+        h.saveFailedAudio({8}); // ...002
+        auto lt = h.latestTranscript();
+        auto la = h.latestFailedAudio();
+        assert(lt.has_value() && readFile(lt->path) == "t1");
+        assert(la.has_value());
+        std::string audio = readFile(la->path);
+        assert(audio.size() == 1 && (uint8_t)audio[0] == 8);
+    }
+
+    // remove deletes exactly the given entry.
+    {
+        fs::path dir = makeTempDir();
+        History h(dir, 50, FakeClock{});
+        h.saveTranscript("keep"); // ...000
+        h.saveFailedAudio({1});   // ...001
+        auto fa = h.latestFailedAudio();
+        assert(fa.has_value());
+        assert(h.remove(fa->path));
+        auto entries = h.listEntries();
+        assert(entries.size() == 1);
+        assert(readFile(entries[0].path) == "keep");
+    }
+
     std::cout << "history_test: OK" << std::endl;
     return 0;
 }
