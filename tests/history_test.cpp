@@ -41,7 +41,11 @@ int main() {
     {
         fs::path dir = makeTempDir();
         History h(dir, 50, FakeClock{});
-        assert(h.saveTranscript("hello world"));
+        // Note: side-effecting calls must NOT sit inside assert(): under
+        // -DNDEBUG the expression is not evaluated, so the write would be
+        // skipped and later index accesses would read an empty vector.
+        bool saved = h.saveTranscript("hello world");
+        assert(saved);
         auto entries = h.listEntries();
         assert(entries.size() == 1);
         assert(entries[0].kind == HistoryEntryKind::Transcript);
@@ -53,7 +57,8 @@ int main() {
         fs::path dir = makeTempDir();
         History h(dir, 50, FakeClock{});
         std::vector<uint8_t> wav = {'R', 'I', 'F', 'F', 0, 1, 2, 3};
-        assert(h.saveFailedAudio(wav));
+        bool saved = h.saveFailedAudio(wav);
+        assert(saved);
         auto entries = h.listEntries();
         assert(entries.size() == 1);
         assert(entries[0].kind == HistoryEntryKind::FailedAudio);
@@ -93,8 +98,10 @@ int main() {
         fs::path dir = makeTempDir();
         // A clock that always returns the same stamp.
         History h(dir, 50, []() { return std::string("20260101-120000"); });
-        assert(h.saveTranscript("one"));
-        assert(h.saveTranscript("two"));
+        bool savedOne = h.saveTranscript("one");
+        bool savedTwo = h.saveTranscript("two");
+        assert(savedOne);
+        assert(savedTwo);
         auto entries = h.listEntries();
         assert(entries.size() == 2);
     }
@@ -122,7 +129,8 @@ int main() {
         h.saveFailedAudio({1});   // ...001
         auto fa = h.latestFailedAudio();
         assert(fa.has_value());
-        assert(h.remove(fa->path));
+        bool removed = h.remove(fa->path);
+        assert(removed);
         auto entries = h.listEntries();
         assert(entries.size() == 1);
         assert(readFile(entries[0].path) == "keep");
