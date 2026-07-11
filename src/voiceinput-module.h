@@ -9,6 +9,7 @@
 #include <fcitx-utils/eventdispatcher.h>
 #include <fcitx-utils/handlertable.h>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,10 +36,14 @@ private:
   void registerEventWatchers();
   void showIndicator(const std::string &text);
   void hideIndicator();
+  void showTransientError(const std::string &text);
   void startListening();
   void finishRecording();
   void onCaptureComplete(std::vector<uint8_t> wav);
   void cancel();
+  void retryLast();
+  void retryEntry(const std::filesystem::path &wavPath);
+  void recommitLast();
 
   VoiceInputConfig config_;
   fcitx::Instance *instance_;

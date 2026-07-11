@@ -86,6 +86,14 @@ void VoiceInputModule::registerEventWatchers() {
             ke.filterAndAccept();
             finishRecording();
           }
+        } else if (!active_ && !ke.isRelease() &&
+                   ke.key().checkKeyList(config_.retryKey.value())) {
+          ke.filterAndAccept();
+          retryLast();
+        } else if (!active_ && !ke.isRelease() &&
+                   ke.key().checkKeyList(config_.recommitKey.value())) {
+          ke.filterAndAccept();
+          recommitLast();
         } else if (active_) {
           if (!ke.isRelease() &&
               ke.key().checkKeyList(config_.cancelKey.value())) {
@@ -142,18 +150,7 @@ void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav) {
             }
           }
           FCITX_WARN() << "voiceinput: STT error: " << err;
-          showIndicator("Error: " + err);
-          struct timespec ts;
-          clock_gettime(CLOCK_MONOTONIC, &ts);
-          uint64_t usec = static_cast<uint64_t>(ts.tv_sec) * 1'000'000ULL +
-                          static_cast<uint64_t>(ts.tv_nsec) / 1000ULL +
-                          3'000'000ULL;
-          errorTimer_ = instance_->eventLoop().addTimeEvent(
-              CLOCK_MONOTONIC, usec, 0,
-              [this](fcitx::EventSourceTime *, uint64_t) -> bool {
-                hideIndicator();
-                return true;
-              });
+          showTransientError("Error: " + err);
         });
       });
 }
@@ -178,6 +175,55 @@ void VoiceInputModule::cancel() {
   active_ = false;
 }
 
+void VoiceInputModule::recommitLast() {
+  if (!history_) {
+    return;
+  }
+  auto entry = history_->latestTranscript();
+  if (!entry) {
+    showTransientError("No history");
+    return;
+  }
+  std::string text = readFile(entry->path);
+  if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
+    ic->commitString(text);
+  }
+}
+
+void VoiceInputModule::retryLast() {
+  if (!history_) {
+    return;
+  }
+  auto entry = history_->latestFailedAudio();
+  if (!entry) {
+    showTransientError("No history");
+    return;
+  }
+  retryEntry(entry->path);
+}
+
+void VoiceInputModule::retryEntry(const std::filesystem::path &wavPath) {
+  std::string data = readFile(wavPath);
+  std::vector<uint8_t> wav(data.begin(), data.end());
+  showIndicator("Transcribing…");
+  recognizer_->transcribe(
+      wav,
+      [this, wavPath](std::string text) {
+        dispatcher_.schedule([this, text = std::move(text), wavPath]() {
+          onSpeechResult(text);
+          if (history_) {
+            history_->remove(wavPath); // retry succeeded; drop the audio
+          }
+        });
+      },
+      [this](std::string err) {
+        dispatcher_.schedule([this, err = std::move(err)]() {
+          FCITX_WARN() << "voiceinput: retry STT error: " << err;
+          showTransientError("Error: " + err);
+        });
+      });
+}
+
 void VoiceInputModule::showIndicator(const std::string &text) {
   auto *ic = instance_->inputContextManager().mostRecentInputContext();
   if (!ic) {
@@ -196,6 +242,20 @@ void VoiceInputModule::hideIndicator() {
   }
   ic->inputPanel().reset();
   ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+}
+
+void VoiceInputModule::showTransientError(const std::string &text) {
+  showIndicator(text);
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  uint64_t usec = static_cast<uint64_t>(ts.tv_sec) * 1'000'000ULL +
+                  static_cast<uint64_t>(ts.tv_nsec) / 1000ULL + 3'000'000ULL;
+  errorTimer_ = instance_->eventLoop().addTimeEvent(
+      CLOCK_MONOTONIC, usec, 0,
+      [this](fcitx::EventSourceTime *, uint64_t) -> bool {
+        hideIndicator();
+        return true;
+      });
 }
 
 namespace fcitx {
