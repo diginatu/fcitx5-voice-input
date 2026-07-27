@@ -16,7 +16,14 @@
 #include <fcitx-utils/event.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
+// StandardPaths (fcitx-utils/standardpaths.h) only exists in newer Fcitx5;
+// 5.1.7 (Ubuntu 24.04, and therefore CI) still ships the older StandardPath.
+#if __has_include(<fcitx-utils/standardpaths.h>)
 #include <fcitx-utils/standardpaths.h>
+#define VOICEINPUT_HAS_STANDARDPATHS 1
+#else
+#include <fcitx-utils/standardpath.h>
+#endif
 
 #include <algorithm>
 #include <ctime>
@@ -43,9 +50,13 @@ std::unique_ptr<History> makeHistory(const VoiceInputConfig &config) {
   if (!config.historyEnabled.value()) {
     return nullptr;
   }
+#ifdef VOICEINPUT_HAS_STANDARDPATHS
+  std::filesystem::path dir = fcitx::StandardPaths::global().userDirectory(
+      fcitx::StandardPathsType::Data);
+#else
   std::filesystem::path dir =
-      fcitx::StandardPaths::global().userDirectory(
-          fcitx::StandardPathsType::Data);
+      fcitx::StandardPath::global().userDirectory(fcitx::StandardPath::Type::Data);
+#endif
   dir /= "fcitx5/voiceinput/history";
   auto size = static_cast<std::size_t>(std::max(1, config.historySize.value()));
   return std::make_unique<History>(std::move(dir), size);
