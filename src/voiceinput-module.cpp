@@ -178,7 +178,7 @@ void VoiceInputModule::registerEventWatchers() {
         }
         if (!ke.isRelease() &&
             ke.key().checkKeyList(config_.activationKey.value())) {
-          if (!active_) {
+          if (!session_.listening()) {
             ke.filterAndAccept();
             startListening();
           } else {
@@ -186,19 +186,19 @@ void VoiceInputModule::registerEventWatchers() {
             ke.filterAndAccept();
             finishRecording();
           }
-        } else if (!active_ && !ke.isRelease() &&
+        } else if (!session_.listening() && !ke.isRelease() &&
                    ke.key().checkKeyList(config_.retryKey.value())) {
           ke.filterAndAccept();
           retryLast();
-        } else if (!active_ && !ke.isRelease() &&
+        } else if (!session_.listening() && !ke.isRelease() &&
                    ke.key().checkKeyList(config_.recommitKey.value())) {
           ke.filterAndAccept();
           recommitLast();
-        } else if (!active_ && !ke.isRelease() &&
+        } else if (!session_.listening() && !ke.isRelease() &&
                    ke.key().checkKeyList(config_.historyKey.value())) {
           ke.filterAndAccept();
           openHistoryPicker();
-        } else if (active_) {
+        } else if (session_.listening()) {
           if (!ke.isRelease() &&
               ke.key().checkKeyList(config_.cancelKey.value())) {
             ke.filterAndAccept();
@@ -214,52 +214,71 @@ void VoiceInputModule::registerEventWatchers() {
 void VoiceInputModule::startListening() {
   errorTimer_.reset();
   if (!audioCapture_->start()) {
-    FCITX_WARN() << "voiceinput: failed to start audio capture";
-    showIndicator("Audio init failed");
-    return;
+    // start() only refuses when a capture session is still open, which means a
+    // previous one was never finished or cancelled. Drop it so a stale session
+    // can never wedge the addon until Fcitx5 is restarted.
+    FCITX_WARN() << "voiceinput: stale capture session; dropping it";
+    audioCapture_->cancel();
+    if (!audioCapture_->start()) {
+      FCITX_WARN() << "voiceinput: failed to start audio capture";
+      showTransientError("Audio capture busy");
+      return;
+    }
   }
-  active_ = true;
+  session_.beginListening();
   showIndicator("Listening…");
 }
 
 void VoiceInputModule::finishRecording() {
-  active_ = false;
+  // The generation stays current: this session still owns the indicator until
+  // its transcript lands.
+  session_.stopListening();
+  const uint64_t gen = session_.currentGeneration();
   showIndicator("Transcribing…");
   // Non-blocking: the worker delivers the WAV later, on its own thread. Hop back
   // to the Fcitx main thread before touching any module/input-context state.
-  audioCapture_->finish([this](std::vector<uint8_t> wav) {
-    dispatcher_.schedule([this, wav = std::move(wav)]() mutable {
-      onCaptureComplete(std::move(wav));
+  audioCapture_->finish([this, gen](std::vector<uint8_t> wav) {
+    dispatcher_.schedule([this, gen, wav = std::move(wav)]() mutable {
+      onCaptureComplete(std::move(wav), gen);
     });
   });
 }
 
-void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav) {
+void VoiceInputModule::onCaptureComplete(std::vector<uint8_t> wav,
+                                         uint64_t gen) {
   FCITX_INFO() << "voiceinput: captured " << wav.size() << " bytes";
   if (wav.empty()) {
-    hideIndicator();
+    if (session_.isCurrent(gen)) {
+      hideIndicator();
+    }
     return;
   }
   recognizer_->transcribe(
       wav, // pass by copy; keep our own for the error path below
-      [this](std::string text) {
-        dispatcher_.schedule(
-            [this, text = std::move(text)]() { onSpeechResult(text); });
+      [this, gen](std::string text) {
+        dispatcher_.schedule([this, gen, text = std::move(text)]() {
+          onSpeechResult(text, gen);
+        });
       },
-      [this, wav](std::string err) {
-        dispatcher_.schedule([this, err = std::move(err), wav]() {
+      [this, gen, wav](std::string err) {
+        dispatcher_.schedule([this, gen, err = std::move(err), wav]() {
           if (history_) {
             if (!history_->saveFailedAudio(wav)) {
               FCITX_WARN() << "voiceinput: failed to save audio to history";
             }
           }
           FCITX_WARN() << "voiceinput: STT error: " << err;
-          showTransientError("Error: " + err);
+          // A newer recording may already own the indicator; never steal it.
+          if (session_.isCurrent(gen)) {
+            showTransientError("Error: " + err);
+          }
         });
       });
 }
 
-void VoiceInputModule::onSpeechResult(const std::string &text) {
+void VoiceInputModule::onSpeechResult(const std::string &text, uint64_t gen) {
+  // The user asked for this transcript, so commit and archive it even when a
+  // newer job has taken over.
   if (auto *ic = instance_->inputContextManager().mostRecentInputContext()) {
     ic->commitString(text);
   }
@@ -268,15 +287,18 @@ void VoiceInputModule::onSpeechResult(const std::string &text) {
       FCITX_WARN() << "voiceinput: failed to save transcript to history";
     }
   }
-  hideIndicator();
-  active_ = false;
+  // Only the current job may clear the indicator: hiding a newer session's
+  // "Listening..." here is what used to desync the module from AudioCapture.
+  if (session_.isCurrent(gen)) {
+    hideIndicator();
+  }
 }
 
 void VoiceInputModule::cancel() {
   // Drop the buffer; user cancelled. Non-blocking, like finishRecording().
   audioCapture_->cancel();
   hideIndicator();
-  active_ = false;
+  session_.abandon();
 }
 
 void VoiceInputModule::recommitLast() {
@@ -309,21 +331,26 @@ void VoiceInputModule::retryLast() {
 void VoiceInputModule::retryEntry(const std::filesystem::path &wavPath) {
   std::string data = readFile(wavPath);
   std::vector<uint8_t> wav(data.begin(), data.end());
+  // A retry is a job of its own: it owns the indicator until it lands, and is
+  // superseded if the user starts recording in the meantime.
+  const uint64_t gen = session_.beginRetry();
   showIndicator("Transcribing…");
   recognizer_->transcribe(
       wav,
-      [this, wavPath](std::string text) {
-        dispatcher_.schedule([this, text = std::move(text), wavPath]() {
-          onSpeechResult(text);
+      [this, gen, wavPath](std::string text) {
+        dispatcher_.schedule([this, gen, text = std::move(text), wavPath]() {
+          onSpeechResult(text, gen);
           if (history_) {
             history_->remove(wavPath); // retry succeeded; drop the audio
           }
         });
       },
-      [this](std::string err) {
-        dispatcher_.schedule([this, err = std::move(err)]() {
+      [this, gen](std::string err) {
+        dispatcher_.schedule([this, gen, err = std::move(err)]() {
           FCITX_WARN() << "voiceinput: retry STT error: " << err;
-          showTransientError("Error: " + err);
+          if (session_.isCurrent(gen)) {
+            showTransientError("Error: " + err);
+          }
         });
       });
 }

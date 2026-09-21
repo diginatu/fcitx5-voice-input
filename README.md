@@ -88,6 +88,7 @@ fcitx5-voiceinput/
 │   ├── wav_header.h               # 44-byte RIFF/PCM header builder
 │   ├── speech_recognizer.{h,cpp}  # libcurl POST to Whisper-/OpenAI-compatible HTTP STT
 │   ├── history.{h,cpp}            # on-disk history of transcripts + failed recordings
+│   ├── listen_session.h           # which job owns the indicator / recording state
 │   ├── voiceinput_config.h        # FCITX_CONFIGURATION schema (keys, endpoint, format, …)
 │   └── voiceinput.conf{,.in}
 ├── tests/
@@ -95,7 +96,8 @@ fcitx5-voiceinput/
 │   ├── wav_header_test.cpp           # CTest target: ctest -R wav_header_test
 │   ├── speech_recognizer_test.cpp    # CTest target: ctest -R speech_recognizer_test
 │   ├── voiceinput_config_test.cpp    # CTest target: ctest -R voiceinput_config_test
-│   └── history_test.cpp              # CTest target: ctest -R history_test
+│   ├── history_test.cpp              # CTest target: ctest -R history_test
+│   └── listen_session_test.cpp       # CTest target: ctest -R listen_session_test
 ├── data/
 └── ...
 ```
@@ -142,10 +144,13 @@ After installing the addon, restarting Fcitx5, and starting a Whisper-compatible
 4. Press **F12** again — the indicator changes to "Transcribing…" and the recorded WAV is uploaded in the background. Within ~1–3 s (depending on the server and model size) the transcript is committed into the focused field. If the request fails, a brief `Error: …` indicator is shown instead.
 5. To cancel while recording, press **Esc** — the buffer is discarded and nothing is uploaded. Once the request is in flight, it cannot be cancelled.
 
+You do not have to wait for a transcript before recording again: pressing **F12** while "Transcribing…" is shown starts a new recording, and the earlier transcript is still committed (and saved to history) when it arrives.
+
 The addon logs to wherever your Fcitx5 instance logs (e.g. `journalctl --user -u fcitx5` on systemd setups, or its stderr if you started it manually). Useful lines:
 
 - `voiceinput: captured N bytes` — capture finished, request fired. `N` should be roughly `44 + 32000 * seconds_spoken`.
 - `voiceinput: STT error: …` — the server returned non-2xx or libcurl reported a transport error (e.g. connection refused if the STT server isn't running). The same message is shown on-screen as an `Error: …` indicator for a few seconds.
+- `voiceinput: stale capture session; dropping it` — a previous recording was never finished or cancelled, so it is discarded and the new one starts anyway. This should not happen; please report it if it does.
 
 ## History and Recovery
 

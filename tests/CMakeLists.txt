@@ -18,3 +18,7 @@ add_test(NAME capture_delivery_test COMMAND capture_delivery_test)
 add_executable(history_test history_test.cpp ${CMAKE_SOURCE_DIR}/src/history.cpp)
 target_include_directories(history_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME history_test COMMAND history_test)
+
+add_executable(listen_session_test listen_session_test.cpp)
+target_include_directories(listen_session_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME listen_session_test COMMAND listen_session_test)

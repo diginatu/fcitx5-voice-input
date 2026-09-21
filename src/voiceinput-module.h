@@ -1,5 +1,6 @@
 #pragma once
 #include "history.h"
+#include "listen_session.h"
 #include "voiceinput_config.h"
 #include <fcitx-config/rawconfig.h>
 #include <fcitx/addoninstance.h>
@@ -26,7 +27,7 @@ public:
 
   fcitx::Instance *instance() { return instance_; }
 
-  void onSpeechResult(const std::string &text);
+  void onSpeechResult(const std::string &text, uint64_t gen);
 
   const fcitx::Configuration *getConfig() const override { return &config_; }
   void setConfig(const fcitx::RawConfig &config) override;
@@ -39,7 +40,7 @@ private:
   void showTransientError(const std::string &text);
   void startListening();
   void finishRecording();
-  void onCaptureComplete(std::vector<uint8_t> wav);
+  void onCaptureComplete(std::vector<uint8_t> wav, uint64_t gen);
   void cancel();
   void retryLast();
   void retryEntry(const std::filesystem::path &wavPath);
@@ -53,7 +54,7 @@ private:
       eventHandlers_;
 
   fcitx::EventDispatcher dispatcher_;
-  bool active_ = false;
+  ListenSession session_;
   bool pickerOpen_ = false;
   std::unique_ptr<SpeechRecognizer> recognizer_;
   std::unique_ptr<AudioCapture> audioCapture_;
