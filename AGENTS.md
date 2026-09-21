@@ -14,7 +14,6 @@ Read this fully before making code or build changes.
 - Addon descriptor template: `src/voiceinput.conf.in` (configured via CMake to produce `voiceinput.conf` for `addon/`).
 - User-facing configuration schema: defined in C++ via `FCITX_CONFIGURATION` in `src/voiceinput_config.h` (`VoiceInputConfig` — `ActivationKey`, `CancelKey`, `Endpoint`). Exposed at runtime via `VoiceInputModule::getConfig()` / `setConfig()`; persisted to `~/.config/fcitx5/conf/voiceinput.conf` via `readAsIni` / `safeSaveAsIni`.
 - The `quickphrase/` directory is vendored code from upstream Fcitx kept as a reference implementation. It is NOT wired into the root `CMakeLists.txt` and is not built — do not assume changes there have any effect on the produced addon.
-- Icon assets live under `data/icons/` (e.g. `microphone.svg`).
 
 Always skim `README.md` and this `AGENTS.md` file before larger edits.
 
